@@ -1,4 +1,6 @@
 """FastAPI backend for Tapo LED Controller."""
+import socket
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -105,6 +107,47 @@ async def last_ip():
     """Get last used device IP for pre-filling login form."""
     ip = get_last_ip()
     return {"ip": ip}
+
+
+# ============ Device Discovery ============
+
+async def check_tapo_device(ip: str, timeout: float = 1.0) -> dict | None:
+    """Check if an IP is a Tapo device by trying to connect."""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, 80),
+            timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return {"ip": ip, "reachable": True}
+    except Exception:
+        return None
+
+
+@app.get("/discover")
+async def discover_devices():
+    """Scan local network for potential Tapo devices."""
+    # Get local IP to determine network
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+    finally:
+        s.close()
+
+    # Scan common IP ranges (last octet 1-254)
+    network_prefix = ".".join(local_ip.split(".")[:-1])
+    tasks = []
+
+    for i in range(1, 255):
+        ip = f"{network_prefix}.{i}"
+        tasks.append(check_tapo_device(ip, timeout=0.5))
+
+    results = await asyncio.gather(*tasks)
+    devices = [r for r in results if r is not None]
+
+    return {"local_ip": local_ip, "network": f"{network_prefix}.0/24", "potential_devices": devices}
 
 
 # ============ Device Control ============

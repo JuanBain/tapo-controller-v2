@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { HsvaColor, HsvaColorPicker } from 'react-colorful';
 import { TitleBar } from './components/TitleBar';
-import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles } from 'lucide-react';
+import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles, Search } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8742';
 
@@ -23,6 +23,8 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [deviceIp, setDeviceIp] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [discoveredDevices, setDiscoveredDevices] = useState<string[]>([]);
 
   const [color, setColor] = useState<HsvaColor>({ h: 200, s: 100, v: 100, a: 1 });
   const [brightness, setBrightness] = useState(100);
@@ -81,6 +83,20 @@ export default function App() {
     await fetch(`${API}/auth/logout`, { method: 'POST' });
     setConnected(false);
     setDevice(null);
+  };
+
+  const scanNetwork = async () => {
+    setScanning(true);
+    setDiscoveredDevices([]);
+    try {
+      const res = await fetch(`${API}/discover`);
+      const data = await res.json();
+      setDiscoveredDevices(data.potential_devices.map((d: { ip: string }) => d.ip));
+    } catch (err) {
+      console.error('Scan failed:', err);
+    } finally {
+      setScanning(false);
+    }
   };
 
   const togglePower = async () => {
@@ -188,8 +204,23 @@ export default function App() {
             <div className="relative">
               <Wifi size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input type="text" value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP"
-                className="w-full pl-10 pr-3 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
+                className="w-full pl-10 pr-10 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
+              <button type="button" onClick={scanNetwork} disabled={scanning}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-violet-400 disabled:opacity-50"
+                title="Scan network">
+                <Search size={16} className={scanning ? 'animate-pulse' : ''} />
+              </button>
             </div>
+            {discoveredDevices.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {discoveredDevices.map(ip => (
+                  <button key={ip} type="button" onClick={() => setDeviceIp(ip)}
+                    className={`px-2 py-1 text-xs rounded-md transition-colors ${deviceIp === ip ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
+                    {ip}
+                  </button>
+                ))}
+              </div>
+            )}
             {error && <p className="text-red-400 text-xs">{error}</p>}
             <button type="submit" disabled={connecting}
               className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors">
