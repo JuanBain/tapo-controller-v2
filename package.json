@@ -9,13 +9,15 @@
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.js",
+    "dev:win": "scripts\\dev.bat",
+    "dev:frontend": "concurrently -n vite,electron -c green,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "concurrently -n vite,electron -c green,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
-    "backend:install": "cd backend && pip install -r requirements.txt",
-    "backend:dev": "cd backend && uvicorn main:app --reload --port 8742"
+    "backend:install": "py -3 -m pip install -r requirements.txt",
+    "start": "npm run dev"
   },
   "dependencies": {
     "clsx": "^2.1.1",

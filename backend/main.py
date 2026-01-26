@@ -58,12 +58,42 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     email: str
     password: str
-    device_ip: str
+    device_ip: str | None = None
+
+
+class SaveCredentialsRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/save-credentials")
+async def save_creds(req: SaveCredentialsRequest):
+    """Save credentials without connecting to a device."""
+    save_credentials(Credentials(
+        email=req.email,
+        password=req.password,
+    ))
+    return {"success": True}
+
+
+@app.get("/auth/has-credentials")
+async def has_credentials():
+    """Check if credentials are saved."""
+    creds = load_credentials()
+    return {"has_credentials": creds is not None}
 
 
 @app.post("/auth/login")
 async def login(req: LoginRequest):
     """Login and connect to device (adds to device list)."""
+    if not req.device_ip:
+        # Just save credentials without connecting
+        save_credentials(Credentials(
+            email=req.email,
+            password=req.password,
+        ))
+        return {"success": True, "device": None}
+
     try:
         device = TapoDevice(req.email, req.password)
         info = await device.connect(req.device_ip)
@@ -101,15 +131,19 @@ async def logout():
 
 @app.get("/auth/status")
 async def auth_status():
-    """Check if connected to device."""
+    """Check if authenticated (credentials saved) and device connection status."""
+    creds = load_credentials()
+    if not creds:
+        return {"authenticated": False, "connected": False}
+
     device = get_device()
     if device and device.device:
         try:
             info = await device.get_info()
-            return {"connected": True, "device": info}
+            return {"authenticated": True, "connected": True, "device": info}
         except Exception:
             pass
-    return {"connected": False}
+    return {"authenticated": True, "connected": False}
 
 
 @app.get("/auth/last-ip")

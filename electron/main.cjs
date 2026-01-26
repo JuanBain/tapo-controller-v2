@@ -152,7 +152,7 @@ function startBackend() {
     ? path.join(__dirname, '../backend')
     : path.join(process.resourcesPath, 'backend');
 
-  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const pythonCmd = process.platform === 'win32' ? 'py' : 'python3';
 
   backendProcess = spawn(pythonCmd, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8742'], {
     cwd: backendPath,
@@ -192,7 +192,10 @@ ipcMain.on('window:close', () => mainWindow?.hide());
 
 // App lifecycle
 app.whenReady().then(() => {
-  startBackend();
+  // Only start backend in production - in dev it's managed by npm scripts
+  if (app.isPackaged) {
+    startBackend();
+  }
   createWindow();
   createTray();
 

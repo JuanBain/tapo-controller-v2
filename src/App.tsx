@@ -57,17 +57,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    Promise.all([
-      fetch(`${API}/auth/status`).then(r => r.json()),
-      fetch(`${API}/auth/last-ip`).then(r => r.json()),
-    ])
-      .then(async ([statusData, lastIpData]) => {
-        if (statusData.connected) {
+    fetch(`${API}/auth/status`)
+      .then(r => r.json())
+      .then(async (statusData) => {
+        if (statusData.authenticated) {
           setLoggedIn(true);
           await loadDevices();
-        }
-        if (lastIpData.ip) {
-          setDeviceIp(lastIpData.ip);
         }
       })
       .catch(() => {})
@@ -100,14 +95,14 @@ export default function App() {
       const res = await fetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, device_ip: deviceIp }),
+        body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail);
       setLoggedIn(true);
-      setShowAddDevice(false);
-      await loadDevices();
-      setSelectedDevice(deviceIp);
+      // Go straight to device discovery
+      setShowAddDevice(true);
+      scanNetwork();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -272,7 +267,7 @@ export default function App() {
             <Sparkles size={28} className="text-white" />
           </div>
           <h1 className="text-xl font-semibold mb-1">Tapo Controller</h1>
-          <p className="text-zinc-500 text-sm mb-6">Connect to your LED devices</p>
+          <p className="text-zinc-500 text-sm mb-6">Sign in with your Tapo account</p>
 
           <form onSubmit={handleLogin} className="w-full max-w-xs space-y-3">
             <div className="relative">
@@ -285,30 +280,10 @@ export default function App() {
               <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
                 className="w-full pl-10 pr-3 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
             </div>
-            <div className="relative">
-              <Wifi size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <input type="text" value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="First Device IP"
-                className="w-full pl-10 pr-10 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
-              <button type="button" onClick={scanNetwork} disabled={scanning}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-violet-400 disabled:opacity-50"
-                title="Scan network">
-                <Search size={16} className={scanning ? 'animate-pulse' : ''} />
-              </button>
-            </div>
-            {discoveredDevices.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {discoveredDevices.map(ip => (
-                  <button key={ip} type="button" onClick={() => setDeviceIp(ip)}
-                    className={`px-2 py-1 text-xs rounded-md transition-colors ${deviceIp === ip ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
-                    {ip}
-                  </button>
-                ))}
-              </div>
-            )}
             {error && <p className="text-red-400 text-xs">{error}</p>}
             <button type="submit" disabled={connecting}
               className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors">
-              {connecting ? <><Loader2 size={16} className="animate-spin" /> Connecting...</> : 'Connect'}
+              {connecting ? <><Loader2 size={16} className="animate-spin" /> Signing in...</> : 'Sign In'}
             </button>
           </form>
         </div>
@@ -318,39 +293,70 @@ export default function App() {
 
   // Add device screen
   if (showAddDevice) {
+    const isFirstDevice = devices.length === 0;
     return (
       <div className="h-screen flex flex-col bg-[#0a0a12]">
         <TitleBar />
         <div className="flex-1 flex flex-col p-4">
-          <button onClick={() => setShowAddDevice(false)} className="flex items-center gap-1 text-zinc-400 hover:text-white mb-4">
-            <ChevronLeft size={16} /> Back
-          </button>
-          <h2 className="text-lg font-semibold mb-4">Add Device</h2>
+          {!isFirstDevice && (
+            <button onClick={() => setShowAddDevice(false)} className="flex items-center gap-1 text-zinc-400 hover:text-white mb-4">
+              <ChevronLeft size={16} /> Back
+            </button>
+          )}
+          <h2 className="text-lg font-semibold mb-2">{isFirstDevice ? 'Add Your First Device' : 'Add Device'}</h2>
+          {isFirstDevice && (
+            <p className="text-zinc-500 text-sm mb-4">Scan your network to find Tapo devices</p>
+          )}
 
           <form onSubmit={handleAddDevice} className="space-y-3">
             <div className="relative">
               <Wifi size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <input type="text" value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP"
+              <input type="text" value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP address"
                 className="w-full pl-10 pr-10 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
               <button type="button" onClick={scanNetwork} disabled={scanning}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-violet-400 disabled:opacity-50">
                 <Search size={16} className={scanning ? 'animate-pulse' : ''} />
               </button>
             </div>
-            {discoveredDevices.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {discoveredDevices.map(ip => (
-                  <button key={ip} type="button" onClick={() => setDeviceIp(ip)}
-                    className={`px-2 py-1 text-xs rounded-md transition-colors ${deviceIp === ip ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
-                    {ip}
-                  </button>
-                ))}
+
+            {scanning && (
+              <div className="flex items-center gap-2 text-zinc-400 text-sm">
+                <Loader2 size={14} className="animate-spin" />
+                Scanning network...
               </div>
             )}
+
+            {discoveredDevices.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-zinc-500">Found {discoveredDevices.length} potential device(s):</p>
+                  <button type="button" onClick={scanNetwork} disabled={scanning}
+                    className="text-xs text-zinc-400 hover:text-violet-400 flex items-center gap-1 disabled:opacity-50">
+                    <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {discoveredDevices.map(ip => (
+                    <button key={ip} type="button" onClick={() => setDeviceIp(ip)}
+                      className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${deviceIp === ip ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
+                      {ip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!scanning && discoveredDevices.length === 0 && (
+              <button type="button" onClick={scanNetwork}
+                className="w-full py-2 text-sm text-zinc-400 hover:text-violet-400 border border-zinc-800 hover:border-zinc-700 rounded-lg transition-colors flex items-center justify-center gap-2">
+                <Search size={14} /> Scan Network
+              </button>
+            )}
+
             {error && <p className="text-red-400 text-xs">{error}</p>}
-            <button type="submit" disabled={connecting}
+            <button type="submit" disabled={connecting || !deviceIp}
               className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-              {connecting ? <><Loader2 size={16} className="animate-spin" /> Adding...</> : 'Add Device'}
+              {connecting ? <><Loader2 size={16} className="animate-spin" /> Connecting...</> : 'Add Device'}
             </button>
           </form>
         </div>
