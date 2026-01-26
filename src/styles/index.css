@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #0f0f1a;
+  color: #e0e0eb;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 150, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 150, 0.5);
+}
+
+/* Title bar drag region */
+.titlebar {
+  -webkit-app-region: drag;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+/* ===== Color Picker Styling ===== */
+.react-colorful {
+  width: 100% !important;
+  height: auto !important;
+  gap: 16px !important;
+}
+
+.react-colorful__saturation {
+  border-radius: 16px !important;
+  height: 180px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.react-colorful__hue,
+.react-colorful__alpha {
+  height: 24px !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.react-colorful__saturation-pointer {
+  width: 24px !important;
+  height: 24px !important;
+  border: 3px solid white !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4) !important;
+}
+
+.react-colorful__hue-pointer,
+.react-colorful__alpha-pointer {
+  width: 24px !important;
+  height: 24px !important;
+  border: 3px solid white !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4) !important;
+  border-radius: 50% !important;
+}
+
+/* ===== Custom Range Slider ===== */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right,
+    rgba(100, 100, 150, 0.2) 0%,
+    rgba(100, 100, 150, 0.4) 100%
+  );
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: 3px solid white;
+  box-shadow: 0 2px 10px rgba(102, 126, 234, 0.5);
+  margin-top: -8px;
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+/* Brightness slider - yellow */
+input[type="range"].brightness-slider::-webkit-slider-thumb {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  box-shadow: 0 2px 15px rgba(251, 191, 36, 0.6);
+}
+
+input[type="range"].brightness-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(to right,
+    rgba(251, 191, 36, 0.1) 0%,
+    rgba(251, 191, 36, 0.4) 100%
+  );
+}
+
+/* Temperature slider */
+input[type="range"].temp-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(to right,
+    #ff9500 0%,
+    #fff5e6 35%,
+    #e6f0ff 65%,
+    #99ccff 100%
+  ) !important;
+  height: 12px;
+  border-radius: 6px;
+}
+
+input[type="range"].temp-slider::-webkit-slider-thumb {
+  background: white;
+  border: 3px solid rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  width: 28px;
+  height: 28px;
+  margin-top: -8px;
+}
+
+/* ===== Glass Card Effect ===== */
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    rgba(30, 30, 50, 0.8) 0%,
+    rgba(20, 20, 35, 0.9) 100%
+  );
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ===== Glow Effects ===== */
+.glow-green {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+}
+
+.glow-purple {
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.4);
+}
+
+/* ===== Animations ===== */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(34, 197, 94, 0.8);
+  }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
