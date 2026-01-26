@@ -36,31 +36,35 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies & PyInstaller
+        run: |
+          pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build backend binary
         run: |
           cd backend
-          pip install -r requirements.txt
+          pyinstaller --clean tapo-backend.spec
 
       - name: Install Node dependencies
         run: npm ci
 
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'
-        run: npm run electron:build -- --win
+        run: npm run build && npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron app (macOS)
         if: matrix.platform == 'mac'
-        run: npm run electron:build -- --mac
+        run: npm run build && npx electron-builder --mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron app (Linux)
         if: matrix.platform == 'linux'
-        run: npm run electron:build -- --linux
+        run: npm run build && npx electron-builder --linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,7 +75,6 @@ jobs:
           name: windows-build
           path: |
             dist-electron/*.exe
-            dist-electron/*.msi
 
       - name: Upload artifacts (macOS)
         if: matrix.platform == 'mac'
@@ -90,7 +93,6 @@ jobs:
           path: |
             dist-electron/*.AppImage
             dist-electron/*.deb
-            dist-electron/*.rpm
 
   release:
     needs: build
@@ -108,12 +110,10 @@ jobs:
         with:
           files: |
             artifacts/**/*.exe
-            artifacts/**/*.msi
             artifacts/**/*.dmg
             artifacts/**/*.zip
             artifacts/**/*.AppImage
             artifacts/**/*.deb
-            artifacts/**/*.rpm
           draft: false
           prerelease: false
           generate_release_notes: true
