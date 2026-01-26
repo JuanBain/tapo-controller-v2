@@ -1,5 +1,7 @@
 """JSON-based persistence for presets and schedules."""
 import json
+import sys
+import os
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel
@@ -7,8 +9,27 @@ from datetime import datetime
 import uuid
 
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+def get_data_dir() -> Path:
+    """Get the data directory, handling PyInstaller frozen state."""
+    # Check if running as PyInstaller bundle
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        if sys.platform == 'win32':
+            base = Path(os.environ.get('APPDATA', Path.home()))
+        elif sys.platform == 'darwin':
+            base = Path.home() / 'Library' / 'Application Support'
+        else:
+            base = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
+        data_dir = base / 'tapo-controller' / 'data'
+    else:
+        # Running as script (development)
+        data_dir = Path(__file__).parent / "data"
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
+DATA_DIR = get_data_dir()
 
 CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 PRESETS_FILE = DATA_DIR / "presets.json"

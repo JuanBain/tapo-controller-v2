@@ -33,6 +33,11 @@ npm-debug.log*
 # Backend data
 backend/data/
 
+# PyInstaller
+backend/dist/
+backend/build/
+*.spec.bak
+
 # Electron
 release/
 *.asar

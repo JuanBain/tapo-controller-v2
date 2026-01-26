@@ -149,16 +149,27 @@ async function sendQuickAction(action, value) {
 }
 
 function startBackend() {
-  const backendPath = isDev
-    ? path.join(__dirname, '../backend')
-    : path.join(process.resourcesPath, 'backend');
+  let backendExe;
 
-  const pythonCmd = process.platform === 'win32' ? 'py' : 'python3';
+  if (isDev) {
+    // In development, still use Python
+    const backendPath = path.join(__dirname, '../backend');
+    const pythonCmd = process.platform === 'win32' ? 'py' : 'python3';
 
-  backendProcess = spawn(pythonCmd, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8742'], {
-    cwd: backendPath,
-    stdio: 'pipe',
-  });
+    backendProcess = spawn(pythonCmd, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8742'], {
+      cwd: backendPath,
+      stdio: 'pipe',
+    });
+  } else {
+    // In production, use the compiled binary
+    const backendPath = path.join(process.resourcesPath, 'backend');
+    const exeName = process.platform === 'win32' ? 'tapo-backend.exe' : 'tapo-backend';
+    backendExe = path.join(backendPath, exeName);
+
+    backendProcess = spawn(backendExe, [], {
+      stdio: 'pipe',
+    });
+  }
 
   backendProcess.stdout?.on('data', (data) => {
     console.log(`[Backend] ${data}`);
@@ -181,7 +192,7 @@ function stopBackend() {
 }
 
 // IPC handlers for window controls
-ipcMain.on('window:minimize', () => mainWindow?.hide()); // Minimize to tray
+ipcMain.on('window:minimize', () => mainWindow?.minimize()); // Normal minimize to taskbar
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
@@ -189,7 +200,7 @@ ipcMain.on('window:maximize', () => {
     mainWindow?.maximize();
   }
 });
-ipcMain.on('window:close', () => mainWindow?.hide());
+ipcMain.on('window:close', () => mainWindow?.close()); // Close normally (will hide to tray via 'close' event)
 
 // IPC handler for auto-start setting
 ipcMain.handle('get-auto-start', () => {

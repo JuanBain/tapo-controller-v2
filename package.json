@@ -1,6 +1,6 @@
 {
   "name": "tapo-controller",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Desktop app for controlling TP-Link Tapo LED strips",
   "author": {
     "name": "BartaG512",
@@ -15,8 +15,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently -n vite,electron -c green,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "vite build && electron-builder",
-    "backend:install": "py -3 -m pip install -r requirements.txt",
+    "electron:build": "npm run backend:build && vite build && electron-builder",
+    "backend:install": "pip install -r backend/requirements.txt pyinstaller",
+    "backend:build": "cd backend && pyinstaller --clean tapo-backend.spec",
+    "backend:build:win": "cd backend && pyinstaller --clean tapo-backend.spec",
+    "backend:build:linux": "cd backend && pyinstaller --clean tapo-backend.spec",
+    "backend:build:mac": "cd backend && pyinstaller --clean tapo-backend.spec",
     "start": "npm run dev"
   },
   "dependencies": {
@@ -51,19 +55,14 @@
       "electron/**/*",
       "resources/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!*.pyc",
-          "!data/**"
-        ]
-      }
-    ],
+    "extraResources": [],
     "win": {
+      "extraResources": [
+        {
+          "from": "backend/dist/tapo-backend.exe",
+          "to": "backend/tapo-backend.exe"
+        }
+      ],
       "target": [
         "nsis",
         "portable"
@@ -71,6 +70,12 @@
       "icon": "resources/icon.ico"
     },
     "mac": {
+      "extraResources": [
+        {
+          "from": "backend/dist/tapo-backend",
+          "to": "backend/tapo-backend"
+        }
+      ],
       "target": [
         "dmg",
         "zip"
@@ -79,6 +84,12 @@
       "category": "public.app-category.utilities"
     },
     "linux": {
+      "extraResources": [
+        {
+          "from": "backend/dist/tapo-backend",
+          "to": "backend/tapo-backend"
+        }
+      ],
       "target": [
         "AppImage",
         "deb"
