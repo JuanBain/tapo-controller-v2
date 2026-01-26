@@ -2,6 +2,10 @@
   "name": "tapo-controller",
   "version": "1.0.0",
   "description": "Desktop app for controlling TP-Link Tapo LED strips",
+  "author": {
+    "name": "BartaG512",
+    "email": "ecco512@gmail.com"
+  },
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
