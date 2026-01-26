@@ -138,14 +138,43 @@ class TapoDevice:
         ]
 
 
-# Global device instance
-_device: TapoDevice | None = None
+# Global device manager - stores multiple connected devices by IP
+_devices: dict[str, TapoDevice] = {}
 
 
-def get_device() -> TapoDevice | None:
-    return _device
+def get_device(ip: str = None) -> TapoDevice | None:
+    """Get a device by IP, or the first device if no IP specified."""
+    if ip:
+        return _devices.get(ip)
+    # Return first device if available (for backward compatibility)
+    if _devices:
+        return next(iter(_devices.values()))
+    return None
 
 
-def set_device(device: TapoDevice) -> None:
-    global _device
-    _device = device
+def get_all_devices() -> dict[str, TapoDevice]:
+    """Get all connected devices."""
+    return _devices
+
+
+def add_device(device: TapoDevice) -> None:
+    """Add a device to the manager."""
+    if device.device_ip:
+        _devices[device.device_ip] = device
+
+
+def remove_device(ip: str) -> bool:
+    """Remove a device from the manager."""
+    if ip in _devices:
+        del _devices[ip]
+        return True
+    return False
+
+
+def set_device(device: TapoDevice | None) -> None:
+    """Legacy function for backward compatibility."""
+    global _devices
+    if device is None:
+        _devices.clear()
+    elif device.device_ip:
+        _devices[device.device_ip] = device

@@ -6,13 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from device import TapoDevice, get_device, set_device
+from device import TapoDevice, get_device, get_all_devices, add_device, remove_device, set_device
 from storage import (
-    Credentials, Preset, Schedule,
+    Credentials, Preset, Schedule, SavedDevice,
     save_credentials, load_credentials, clear_credentials,
     get_presets, save_preset, delete_preset, get_preset,
     get_schedules, save_schedule, update_schedule, delete_schedule,
     save_last_ip, get_last_ip,
+    get_saved_devices, save_device_info, remove_saved_device,
 )
 from scheduler import (
     start_scheduler, stop_scheduler, reload_all_schedules,
@@ -23,16 +24,18 @@ from scheduler import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup: try to reconnect if we have saved credentials
+    # Startup: try to reconnect to all saved devices
     creds = load_credentials()
-    if creds and creds.device_ip:
-        try:
-            device = TapoDevice(creds.email, creds.password)
-            await device.connect(creds.device_ip)
-            set_device(device)
-            print(f"Auto-connected to {creds.device_ip}")
-        except Exception as e:
-            print(f"Auto-connect failed: {e}")
+    if creds:
+        saved_devices = get_saved_devices()
+        for saved in saved_devices:
+            try:
+                device = TapoDevice(creds.email, creds.password)
+                await device.connect(saved.ip)
+                add_device(device)
+                print(f"Auto-connected to {saved.ip} ({saved.nickname})")
+            except Exception as e:
+                print(f"Auto-connect to {saved.ip} failed: {e}")
 
     start_scheduler()
     yield
@@ -60,17 +63,24 @@ class LoginRequest(BaseModel):
 
 @app.post("/auth/login")
 async def login(req: LoginRequest):
-    """Login and connect to device."""
+    """Login and connect to device (adds to device list)."""
     try:
         device = TapoDevice(req.email, req.password)
         info = await device.connect(req.device_ip)
-        set_device(device)
+        add_device(device)
 
         # Save credentials for auto-reconnect
         save_credentials(Credentials(
             email=req.email,
             password=req.password,
             device_ip=req.device_ip,
+        ))
+
+        # Save device info for persistence
+        save_device_info(SavedDevice(
+            ip=req.device_ip,
+            nickname=info.get("nickname"),
+            model=info.get("model"),
         ))
 
         # Persist IP separately for next login
@@ -107,6 +117,64 @@ async def last_ip():
     """Get last used device IP for pre-filling login form."""
     ip = get_last_ip()
     return {"ip": ip}
+
+
+# ============ Device Management ============
+
+@app.get("/devices")
+async def list_devices():
+    """List all devices (connected and saved)."""
+    devices = []
+    connected = get_all_devices()
+    saved = get_saved_devices()
+
+    for s in saved:
+        device_info = {
+            "ip": s.ip,
+            "nickname": s.nickname,
+            "model": s.model,
+            "connected": s.ip in connected,
+            "device_on": None,
+            "brightness": None,
+        }
+        # Get live info if connected
+        if s.ip in connected:
+            try:
+                info = await connected[s.ip].get_info()
+                device_info.update({
+                    "nickname": info.get("nickname", s.nickname),
+                    "device_on": info.get("device_on"),
+                    "brightness": info.get("brightness"),
+                })
+            except Exception:
+                device_info["connected"] = False
+        devices.append(device_info)
+
+    return {"devices": devices}
+
+
+@app.delete("/devices/{ip}")
+async def delete_device(ip: str):
+    """Remove a device from the list."""
+    remove_device(ip)
+    remove_saved_device(ip)
+    return {"success": True}
+
+
+@app.post("/devices/{ip}/reconnect")
+async def reconnect_device(ip: str):
+    """Reconnect to a saved device."""
+    creds = load_credentials()
+    if not creds:
+        raise HTTPException(status_code=401, detail="No credentials saved")
+
+    try:
+        device = TapoDevice(creds.email, creds.password)
+        info = await device.connect(ip)
+        add_device(device)
+        return {"success": True, "device": info}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============ Device Discovery ============
@@ -152,13 +220,18 @@ async def discover_devices():
 
 # ============ Device Control ============
 
-@app.get("/device/info")
-async def device_info():
-    """Get device info."""
-    device = get_device()
+def get_device_or_error(ip: str = None):
+    """Get device by IP or raise error."""
+    device = get_device(ip)
     if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
+        raise HTTPException(status_code=400, detail=f"Not connected to device{' ' + ip if ip else ''}")
+    return device
 
+
+@app.get("/device/info")
+async def device_info(ip: str = None):
+    """Get device info."""
+    device = get_device_or_error(ip)
     try:
         info = await device.get_info()
         return info
@@ -168,15 +241,13 @@ async def device_info():
 
 class PowerRequest(BaseModel):
     on: bool
+    ip: str | None = None
 
 
 @app.post("/device/power")
 async def device_power(req: PowerRequest):
     """Turn device on/off."""
-    device = get_device()
-    if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
-
+    device = get_device_or_error(req.ip)
     try:
         if req.on:
             await device.turn_on()
@@ -189,15 +260,13 @@ async def device_power(req: PowerRequest):
 
 class BrightnessRequest(BaseModel):
     value: int
+    ip: str | None = None
 
 
 @app.post("/device/brightness")
 async def device_brightness(req: BrightnessRequest):
     """Set brightness."""
-    device = get_device()
-    if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
-
+    device = get_device_or_error(req.ip)
     try:
         await device.set_brightness(req.value)
         return {"success": True}
@@ -208,15 +277,13 @@ async def device_brightness(req: BrightnessRequest):
 class ColorRequest(BaseModel):
     hue: int
     saturation: int
+    ip: str | None = None
 
 
 @app.post("/device/color")
 async def device_color(req: ColorRequest):
     """Set color."""
-    device = get_device()
-    if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
-
+    device = get_device_or_error(req.ip)
     try:
         await device.set_color(req.hue, req.saturation)
         return {"success": True}
@@ -226,15 +293,13 @@ async def device_color(req: ColorRequest):
 
 class TemperatureRequest(BaseModel):
     kelvin: int
+    ip: str | None = None
 
 
 @app.post("/device/temperature")
 async def device_temperature(req: TemperatureRequest):
     """Set color temperature."""
-    device = get_device()
-    if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
-
+    device = get_device_or_error(req.ip)
     try:
         await device.set_color_temperature(req.kelvin)
         return {"success": True}
@@ -244,15 +309,13 @@ async def device_temperature(req: TemperatureRequest):
 
 class EffectRequest(BaseModel):
     name: str
+    ip: str | None = None
 
 
 @app.post("/device/effect")
 async def device_effect(req: EffectRequest):
     """Set lighting effect."""
-    device = get_device()
-    if not device or not device.device:
-        raise HTTPException(status_code=400, detail="Not connected to device")
-
+    device = get_device_or_error(req.ip)
     try:
         await device.set_effect(req.name)
         return {"success": True}

@@ -14,6 +14,7 @@ CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 PRESETS_FILE = DATA_DIR / "presets.json"
 SCHEDULES_FILE = DATA_DIR / "schedules.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+DEVICES_FILE = DATA_DIR / "devices.json"
 
 
 class Preset(BaseModel):
@@ -47,6 +48,13 @@ class Credentials(BaseModel):
 
 class Settings(BaseModel):
     last_device_ip: str | None = None
+
+
+class SavedDevice(BaseModel):
+    ip: str
+    nickname: str | None = None
+    model: str | None = None
+    added_at: str | None = None
 
 
 def _load_json(path: Path) -> dict | list:
@@ -166,3 +174,41 @@ def save_last_ip(ip: str) -> None:
 
 def get_last_ip() -> str | None:
     return load_settings().last_device_ip
+
+
+# Saved Devices
+def get_saved_devices() -> list[SavedDevice]:
+    data = _load_json(DEVICES_FILE)
+    if isinstance(data, list):
+        return [SavedDevice(**d) for d in data]
+    return []
+
+
+def save_device_info(device: SavedDevice) -> SavedDevice:
+    devices = get_saved_devices()
+    # Update if exists, otherwise add
+    for i, d in enumerate(devices):
+        if d.ip == device.ip:
+            devices[i] = device
+            _save_json(DEVICES_FILE, [d.model_dump() for d in devices])
+            return device
+    device.added_at = datetime.now().isoformat()
+    devices.append(device)
+    _save_json(DEVICES_FILE, [d.model_dump() for d in devices])
+    return device
+
+
+def remove_saved_device(ip: str) -> bool:
+    devices = get_saved_devices()
+    new_devices = [d for d in devices if d.ip != ip]
+    if len(new_devices) == len(devices):
+        return False
+    _save_json(DEVICES_FILE, [d.model_dump() for d in new_devices])
+    return True
+
+
+def get_saved_device(ip: str) -> SavedDevice | None:
+    for d in get_saved_devices():
+        if d.ip == ip:
+            return d
+    return None
