@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <linearGradient id="ledGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ff6b6b"/>
+      <stop offset="25%" style="stop-color:#feca57"/>
+      <stop offset="50%" style="stop-color:#48dbfb"/>
+      <stop offset="75%" style="stop-color:#ff9ff3"/>
+      <stop offset="100%" style="stop-color:#54a0ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="48" fill="url(#bgGrad)"/>
+
+  <!-- LED Strip representation -->
+  <g filter="url(#glow)">
+    <!-- Main curved strip -->
+    <path d="M40 128 Q128 60 216 128 Q128 196 40 128"
+          fill="none"
+          stroke="url(#ledGrad)"
+          stroke-width="24"
+          stroke-linecap="round"/>
+
+    <!-- LED dots -->
+    <circle cx="60" cy="118" r="8" fill="#ff6b6b"/>
+    <circle cx="95" cy="98" r="8" fill="#feca57"/>
+    <circle cx="128" cy="88" r="8" fill="#48dbfb"/>
+    <circle cx="161" cy="98" r="8" fill="#ff9ff3"/>
+    <circle cx="196" cy="118" r="8" fill="#54a0ff"/>
+  </g>
+
+  <!-- Power symbol -->
+  <g transform="translate(128, 178)">
+    <circle cx="0" cy="0" r="24" fill="none" stroke="#feca57" stroke-width="4" stroke-dasharray="60 20"/>
+    <line x1="0" y1="-28" x2="0" y2="-8" stroke="#feca57" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -180,7 +180,7 @@ function stopBackend() {
 }
 
 // IPC handlers for window controls
-ipcMain.on('window:minimize', () => mainWindow?.minimize());
+ipcMain.on('window:minimize', () => mainWindow?.hide()); // Minimize to tray
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
