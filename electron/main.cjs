@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, safeStorage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow = null;
@@ -201,6 +202,41 @@ ipcMain.handle('set-auto-start', (_, enabled) => {
     openAsHidden: true,
   });
   return enabled;
+});
+
+// Credentials storage
+const getCredentialsPath = () => path.join(app.getPath('userData'), 'credentials.json');
+
+ipcMain.handle('get-saved-credentials', () => {
+  try {
+    const credPath = getCredentialsPath();
+    if (!fs.existsSync(credPath)) return null;
+    const data = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+    let password = null;
+    if (data.encryptedPassword && safeStorage.isEncryptionAvailable()) {
+      password = safeStorage.decryptString(Buffer.from(data.encryptedPassword, 'base64'));
+    }
+    return { email: data.email, password, rememberMe: data.rememberMe };
+  } catch { return null; }
+});
+
+ipcMain.handle('save-credentials', (_, { email, password, rememberMe }) => {
+  try {
+    const data = { email, rememberMe };
+    if (rememberMe && password && safeStorage.isEncryptionAvailable()) {
+      data.encryptedPassword = safeStorage.encryptString(password).toString('base64');
+    }
+    fs.writeFileSync(getCredentialsPath(), JSON.stringify(data));
+    return true;
+  } catch { return false; }
+});
+
+ipcMain.handle('clear-credentials', () => {
+  try {
+    const credPath = getCredentialsPath();
+    if (fs.existsSync(credPath)) fs.unlinkSync(credPath);
+    return true;
+  } catch { return false; }
 });
 
 // App lifecycle

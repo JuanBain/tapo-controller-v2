@@ -7,4 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   getAutoStart: () => ipcRenderer.invoke('get-auto-start'),
   setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),
+  getSavedCredentials: () => ipcRenderer.invoke('get-saved-credentials'),
+  saveCredentials: (creds) => ipcRenderer.invoke('save-credentials', creds),
+  clearCredentials: () => ipcRenderer.invoke('clear-credentials'),
 });

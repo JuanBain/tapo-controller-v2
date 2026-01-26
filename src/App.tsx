@@ -24,6 +24,7 @@ export default function App() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [deviceIp, setDeviceIp] = useState('');
   const [scanning, setScanning] = useState(false);
   const [discoveredDevices, setDiscoveredDevices] = useState<string[]>([]);
@@ -73,6 +74,15 @@ export default function App() {
 
     // Load auto-start setting
     window.electronAPI?.getAutoStart?.().then(setAutoStart).catch(() => {});
+
+    // Load saved credentials
+    window.electronAPI?.getSavedCredentials?.().then((creds) => {
+      if (creds) {
+        setEmail(creds.email || '');
+        setPassword(creds.password || '');
+        setRememberMe(creds.rememberMe || false);
+      }
+    }).catch(() => {});
   }, []);
 
   // Load device info when selected device changes
@@ -105,6 +115,8 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail);
+      // Save credentials
+      await window.electronAPI?.saveCredentials?.({ email, password, rememberMe });
       setLoggedIn(true);
       // Go straight to device discovery
       setShowAddDevice(true);
@@ -292,6 +304,11 @@ export default function App() {
               <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
                 className="w-full pl-10 pr-3 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-violet-500 transition-colors" required />
             </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-violet-600 focus:ring-violet-500 focus:ring-offset-0" />
+              <span className="text-sm text-zinc-400">Remember me</span>
+            </label>
             {error && <p className="text-red-400 text-xs">{error}</p>}
             <button type="submit" disabled={connecting}
               className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors">
