@@ -5,4 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   platform: process.platform,
+  getAutoStart: () => ipcRenderer.invoke('get-auto-start'),
+  setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),
 });

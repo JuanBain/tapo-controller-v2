@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { HsvaColor, HsvaColorPicker } from 'react-colorful';
 import { TitleBar } from './components/TitleBar';
-import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles, Search, Plus, Trash2, RefreshCw, ChevronLeft } from 'lucide-react';
+import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles, Search, Plus, Trash2, RefreshCw, ChevronLeft, Settings } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8742';
 
@@ -32,6 +32,8 @@ export default function App() {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [autoStart, setAutoStart] = useState(false);
 
   // Control state for selected device
   const [color, setColor] = useState<HsvaColor>({ h: 200, s: 100, v: 100, a: 1 });
@@ -57,6 +59,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Load auth status
     fetch(`${API}/auth/status`)
       .then(r => r.json())
       .then(async (statusData) => {
@@ -67,6 +70,9 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Load auto-start setting
+    window.electronAPI?.getAutoStart?.().then(setAutoStart).catch(() => {});
   }, []);
 
   // Load device info when selected device changes
@@ -138,6 +144,12 @@ export default function App() {
     setLoggedIn(false);
     setDevices([]);
     setSelectedDevice(null);
+  };
+
+  const toggleAutoStart = async () => {
+    const newValue = !autoStart;
+    setAutoStart(newValue);
+    await window.electronAPI?.setAutoStart?.(newValue);
   };
 
   const handleRemoveDevice = async (ip: string) => {
@@ -291,6 +303,34 @@ export default function App() {
     );
   }
 
+  // Settings screen
+  if (showSettings) {
+    return (
+      <div className="h-screen flex flex-col bg-[#0a0a12]">
+        <TitleBar />
+        <div className="flex-1 flex flex-col p-4">
+          <button onClick={() => setShowSettings(false)} className="flex items-center gap-1 text-zinc-400 hover:text-white mb-4">
+            <ChevronLeft size={16} /> Back
+          </button>
+          <h2 className="text-lg font-semibold mb-4">Settings</h2>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 bg-zinc-900/50 rounded-xl">
+              <div>
+                <p className="text-sm font-medium">Start on login</p>
+                <p className="text-xs text-zinc-500">Launch app when Windows starts</p>
+              </div>
+              <button onClick={toggleAutoStart}
+                className={`w-12 h-6 rounded-full transition-colors ${autoStart ? 'bg-violet-600' : 'bg-zinc-700'}`}>
+                <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${autoStart ? 'translate-x-6' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Add device screen
   if (showAddDevice) {
     const isFirstDevice = devices.length === 0;
@@ -377,6 +417,10 @@ export default function App() {
             <button onClick={() => { setShowAddDevice(true); setDeviceIp(''); setError(''); }}
               className="p-1.5 text-zinc-400 hover:text-violet-400 hover:bg-zinc-800 rounded-lg transition-colors" title="Add device">
               <Plus size={16} />
+            </button>
+            <button onClick={() => setShowSettings(true)}
+              className="p-1.5 text-zinc-400 hover:text-violet-400 hover:bg-zinc-800 rounded-lg transition-colors" title="Settings">
+              <Settings size={16} />
             </button>
             <button onClick={handleLogout}
               className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors" title="Logout">

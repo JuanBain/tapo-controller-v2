@@ -190,6 +190,19 @@ ipcMain.on('window:maximize', () => {
 });
 ipcMain.on('window:close', () => mainWindow?.hide());
 
+// IPC handler for auto-start setting
+ipcMain.handle('get-auto-start', () => {
+  return app.getLoginItemSettings().openAtLogin;
+});
+
+ipcMain.handle('set-auto-start', (_, enabled) => {
+  app.setLoginItemSettings({
+    openAtLogin: enabled,
+    openAsHidden: true,
+  });
+  return enabled;
+});
+
 // App lifecycle
 app.whenReady().then(() => {
   // Only start backend in production - in dev it's managed by npm scripts
