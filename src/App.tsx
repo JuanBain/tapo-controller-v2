@@ -34,16 +34,21 @@ export default function App() {
   const tempTimeout = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
-    fetch(`${API}/auth/status`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.connected) {
+    Promise.all([
+      fetch(`${API}/auth/status`).then(r => r.json()),
+      fetch(`${API}/auth/last-ip`).then(r => r.json()),
+    ])
+      .then(([statusData, lastIpData]) => {
+        if (statusData.connected) {
           setConnected(true);
-          setDevice(data.device);
-          setBrightness(data.device.brightness);
-          if (data.device.hue !== null) {
-            setColor(c => ({ ...c, h: data.device.hue, s: data.device.saturation }));
+          setDevice(statusData.device);
+          setBrightness(statusData.device.brightness);
+          if (statusData.device.hue !== null) {
+            setColor(c => ({ ...c, h: statusData.device.hue, s: statusData.device.saturation }));
           }
+        }
+        if (lastIpData.ip) {
+          setDeviceIp(lastIpData.ip);
         }
       })
       .catch(() => {})

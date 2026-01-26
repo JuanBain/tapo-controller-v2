@@ -13,6 +13,7 @@ DATA_DIR.mkdir(exist_ok=True)
 CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 PRESETS_FILE = DATA_DIR / "presets.json"
 SCHEDULES_FILE = DATA_DIR / "schedules.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 
 class Preset(BaseModel):
@@ -42,6 +43,10 @@ class Credentials(BaseModel):
     email: str
     password: str
     device_ip: str | None = None
+
+
+class Settings(BaseModel):
+    last_device_ip: str | None = None
 
 
 def _load_json(path: Path) -> dict | list:
@@ -139,3 +144,25 @@ def delete_schedule(schedule_id: str) -> bool:
         return False
     _save_json(SCHEDULES_FILE, [s.model_dump() for s in new_schedules])
     return True
+
+
+# Settings
+def save_settings(settings: Settings) -> None:
+    _save_json(SETTINGS_FILE, settings.model_dump())
+
+
+def load_settings() -> Settings:
+    data = _load_json(SETTINGS_FILE)
+    if not data:
+        return Settings()
+    return Settings(**data)
+
+
+def save_last_ip(ip: str) -> None:
+    settings = load_settings()
+    settings.last_device_ip = ip
+    save_settings(settings)
+
+
+def get_last_ip() -> str | None:
+    return load_settings().last_device_ip

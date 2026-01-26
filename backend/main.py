@@ -10,6 +10,7 @@ from storage import (
     save_credentials, load_credentials, clear_credentials,
     get_presets, save_preset, delete_preset, get_preset,
     get_schedules, save_schedule, update_schedule, delete_schedule,
+    save_last_ip, get_last_ip,
 )
 from scheduler import (
     start_scheduler, stop_scheduler, reload_all_schedules,
@@ -70,6 +71,9 @@ async def login(req: LoginRequest):
             device_ip=req.device_ip,
         ))
 
+        # Persist IP separately for next login
+        save_last_ip(req.device_ip)
+
         return {"success": True, "device": info}
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
@@ -94,6 +98,13 @@ async def auth_status():
         except Exception:
             pass
     return {"connected": False}
+
+
+@app.get("/auth/last-ip")
+async def last_ip():
+    """Get last used device IP for pre-filling login form."""
+    ip = get_last_ip()
+    return {"ip": ip}
 
 
 # ============ Device Control ============
