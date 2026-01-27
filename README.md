@@ -9,145 +9,143 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#development">Development</a> •
-  <a href="#supported-devices">Supported Devices</a>
+  <a href="https://github.com/BartaG512/tapo-controller/releases/latest"><img src="https://img.shields.io/github/v/release/BartaG512/tapo-controller?style=flat-square" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/BartaG512/tapo-controller?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/tauri-v2-orange?style=flat-square" alt="Tauri v2">
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> &middot;
+  <a href="#installation">Installation</a> &middot;
+  <a href="#usage">Usage</a> &middot;
+  <a href="#supported-devices">Supported Devices</a> &middot;
+  <a href="#development">Development</a>
 </p>
 
 ---
 
 ## Features
 
-- 🎨 **Color Control** - Full HSV color picker with real-time preview
-- ☀️ **Brightness** - Smooth brightness adjustment (1-100%)
-- 🌡️ **White Temperature** - Warm to cool white (2500K-6500K)
-- ⚡ **Quick Colors** - 8 preset colors for instant access
-- 🔌 **Power Control** - Turn on/off with one click
-- 💾 **Auto-reconnect** - Remembers your device on restart
-- 🖥️ **System Tray** - Runs in background with quick controls
-- 🌙 **Dark Theme** - Easy on the eyes
+- **Color Control** - Full HSV color picker with real-time preview
+- **Brightness** - Smooth brightness adjustment (1-100%)
+- **White Temperature** - Warm to cool white (2500K-6500K)
+- **Quick Colors** - 8 preset colors for instant access
+- **Custom Presets** - Save and apply your favorite color/brightness combinations
+- **Multi-Device** - Manage multiple Tapo LED strips from one app
+- **Device Discovery** - Scan your local network to find Tapo devices
+- **Scheduling** - Automate your lights with time-based schedules
+- **Power Control** - Turn on/off with one click
+- **Auto-reconnect** - Remembers your devices and reconnects on startup
+- **Secure Credentials** - Passwords stored in your OS keychain, not in plain text
+- **System Tray** - Runs in background with quick controls (power, brightness)
+- **Auto-start** - Optionally launch on system startup
+- **Dark Theme** - Modern dark UI with violet accents
+
+## Supported Devices
+
+| Model | Color | Brightness | Temperature | Effects |
+|-------|:-----:|:----------:|:-----------:|:-------:|
+| L900  |  Yes  |    Yes     |     Yes     |   No    |
+| L920  |  Yes  |    Yes     |     Yes     |   Yes   |
+| L930  |  Yes  |    Yes     |     Yes     |   Yes   |
+
+Other Tapo light devices may also work but are untested.
 
 ## Installation
 
 ### Download
 
-Download the latest release for your platform:
+Grab the latest release for your platform from the [Releases page](https://github.com/BartaG512/tapo-controller/releases/latest):
 
-| Platform | Download |
-|----------|----------|
-| Windows | [Tapo-Controller-Setup.exe](../../releases/latest) |
-| macOS | [Tapo-Controller.dmg](../../releases/latest) |
-| Linux | [Tapo-Controller.AppImage](../../releases/latest) |
+| Platform | File |
+|----------|------|
+| Windows  | `Tapo-Controller-Setup.exe` |
+| macOS    | `Tapo-Controller.dmg` |
+| Linux    | `Tapo-Controller.AppImage` |
 
-### From Source
+### Build from Source
+
+**Prerequisites:** [Node.js 18+](https://nodejs.org/), [Rust](https://rustup.rs/), [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ```bash
-# Clone the repository
 git clone https://github.com/BartaG512/tapo-controller.git
 cd tapo-controller
 
 # Install frontend dependencies
 npm install
 
-# Install backend dependencies
-cd backend
-pip install -r requirements.txt
-cd ..
+# Run in development mode (starts both Vite dev server and Tauri)
+npm run dev
 
-# Run in development mode
-npm run electron:dev
+# Or build a release binary for your platform
+npm run build
 ```
 
 ## Usage
 
-1. **Find your device IP**: Open the Tapo app → Select your LED strip → ⚙️ Settings → Device Info
-2. **Connect**: Enter your Tapo account email, password, and device IP
-3. **Control**: Adjust colors, brightness, and temperature in real-time
+1. **Find your device IP** - Open the Tapo mobile app, select your LED strip, go to Settings > Device Info to find the IP address.
+2. **Connect** - Launch Tapo Controller, enter your Tapo account email, password, and the device IP.
+3. **Control** - Adjust colors, brightness, and white temperature using the interactive controls.
+
+You can also use **Device Discovery** to scan your local network instead of entering the IP manually.
+
+### Quick Tips
+
+- **System tray**: Close the window to minimize to tray. Right-click the tray icon for quick power and brightness controls.
+- **Presets**: Save a color/brightness combination you like, then apply it with one click.
+- **Schedules**: Set your lights to turn on/off at specific times automatically.
+- **Multiple devices**: Add more devices from the device list. The app remembers all of them.
+
+## Tech Stack
+
+| Layer    | Technology |
+|----------|------------|
+| Frontend | React 19, TypeScript, Tailwind CSS, Vite |
+| Desktop  | Tauri v2 |
+| Backend  | Rust (tokio, serde, keyring) |
+| Device API | [tapo](https://github.com/mihai-dinculescu/tapo) crate |
+| Icons    | Lucide React |
 
 ## Development
-
-### Prerequisites
-
-- Node.js 18+
-- Python 3.10+
-- npm or yarn
 
 ### Architecture
 
 ```
 tapo-controller/
-├── electron/          # Electron main process
-│   ├── main.js        # App entry, window & tray management
-│   └── preload.js     # IPC bridge
-├── src/               # React frontend
-│   ├── App.tsx        # Main component
-│   ├── components/    # UI components
-│   └── styles/        # CSS styles
-├── backend/           # Python FastAPI backend
-│   ├── main.py        # API endpoints
-│   ├── device.py      # Tapo device wrapper
-│   ├── storage.py     # JSON persistence
-│   └── scheduler.py   # Schedule management
-└── resources/         # App icons
+├── src/                   # React frontend (TypeScript)
+│   ├── App.tsx            # Main application component
+│   ├── components/        # UI components (TitleBar, etc.)
+│   └── styles/            # Tailwind CSS styles
+├── src-tauri/             # Tauri + Rust backend
+│   ├── src/
+│   │   ├── lib.rs         # App setup, tray, auto-reconnect
+│   │   ├── commands.rs    # Tauri command handlers (IPC API)
+│   │   ├── device.rs      # Tapo device abstraction (L900/L920/L930)
+│   │   ├── storage.rs     # JSON persistence (devices, presets, schedules)
+│   │   ├── scheduler.rs   # Cron-based schedule execution
+│   │   ├── discovery.rs   # Local network device scanning
+│   │   └── credentials.rs # OS keychain integration
+│   └── tauri.conf.json    # Tauri app configuration
+├── docs/                  # Screenshots
+└── package.json           # Frontend dependencies & scripts
 ```
 
-### Running
+### Scripts
 
 ```bash
-# Terminal 1: Start backend
-cd backend
-uvicorn main:app --port 8742
-
-# Terminal 2: Start frontend + Electron
-npm run electron:dev
+npm run dev          # Start Tauri dev mode (Vite + Rust with hot reload)
+npm run build        # Build release binary for current platform
+npm run dev:vite     # Start only the Vite frontend dev server
+npm run build:frontend  # Build only the frontend
 ```
 
-### Building
+## Credits
 
-```bash
-# Build for current platform
-npm run electron:build
-
-# Build output: dist-electron/
-```
-
-## Supported Devices
-
-| Model | Color | Brightness | Temperature | Effects |
-|-------|-------|------------|-------------|---------|
-| L900 | ✅ | ✅ | ✅ | ❌ |
-| L920 | ✅ | ✅ | ✅ | ✅ |
-| L930 | ✅ | ✅ | ✅ | ✅ |
-
-## API Reference
-
-The backend exposes a REST API on `http://localhost:8742`:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/auth/login` | POST | Connect to device |
-| `/auth/logout` | POST | Disconnect |
-| `/auth/status` | GET | Check connection status |
-| `/device/info` | GET | Get device state |
-| `/device/power` | POST | Turn on/off |
-| `/device/brightness` | POST | Set brightness |
-| `/device/color` | POST | Set color (hue, saturation) |
-| `/device/temperature` | POST | Set white temperature |
-| `/device/effect` | POST | Set lighting effect |
-
-## Tech Stack
-
-- **Frontend**: React 19, Tailwind CSS, Vite
-- **Desktop**: Electron
-- **Backend**: Python, FastAPI, [tapo](https://github.com/mihai-dinculescu/tapo)
-- **Icons**: Lucide React
+- [tapo](https://github.com/mihai-dinculescu/tapo) - Unofficial TP-Link Tapo API client for Rust
+- [react-colorful](https://github.com/omgovich/react-colorful) - Lightweight color picker component
+- [Tauri](https://v2.tauri.app/) - Desktop application framework
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Credits
-
-- [tapo](https://github.com/mihai-dinculescu/tapo) - Unofficial Tapo API client
-- [react-colorful](https://github.com/omgovich/react-colorful) - Color picker component
