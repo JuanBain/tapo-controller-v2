@@ -1,0 +1,33 @@
+[package]
+name = "tapo-controller"
+version = "2.0.0"
+description = "Desktop app for controlling TP-Link Tapo LED strips"
+authors = ["BartaG512"]
+edition = "2021"
+
+[lib]
+name = "tapo_controller_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tapo = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio-cron-scheduler = "0.13"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/json-schema/main/tauri/2.x.json",
+  "productName": "Tapo Controller",
+  "version": "2.0.0",
+  "identifier": "com.bartag.tapo-controller",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev:vite",
+    "beforeBuildCommand": "npm run build:frontend"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Tapo Controller",
+        "width": 420,
+        "height": 800,
+        "resizable": true,
+        "decorations": false,
+        "center": true,
+        "transparent": false,
+        "minWidth": 360,
+        "minHeight": 500
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "Tapo Controller"
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
+  }
+}

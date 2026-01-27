@@ -1,29 +1,23 @@
 {
   "name": "tapo-controller",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "Desktop app for controlling TP-Link Tapo LED strips",
   "author": {
     "name": "BartaG512",
     "email": "ecco512@gmail.com"
   },
-  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.js",
-    "dev:win": "scripts\\dev.bat",
-    "dev:frontend": "concurrently -n vite,electron -c green,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "build": "vite build",
-    "preview": "vite preview",
-    "electron:dev": "concurrently -n vite,electron -c green,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "npm run backend:build && vite build && electron-builder",
-    "backend:install": "pip install -r backend/requirements.txt pyinstaller",
-    "backend:build": "cd backend && pyinstaller --clean tapo-backend.spec",
-    "backend:build:win": "cd backend && pyinstaller --clean tapo-backend.spec",
-    "backend:build:linux": "cd backend && pyinstaller --clean tapo-backend.spec",
-    "backend:build:mac": "cd backend && pyinstaller --clean tapo-backend.spec",
-    "start": "npm run dev"
+    "dev:vite": "vite",
+    "dev": "tauri dev",
+    "build:frontend": "vite build",
+    "build": "tauri build",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "^2",
+    "@tauri-apps/plugin-store": "^2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
@@ -31,75 +25,14 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
-    "concurrently": "^9.0.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.0",
-    "vite": "^6.0.0",
-    "wait-on": "^8.0.0"
-  },
-  "build": {
-    "appId": "com.bartag.tapo-controller",
-    "productName": "Tapo Controller",
-    "directories": {
-      "output": "dist-electron"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "resources/**/*"
-    ],
-    "extraResources": [],
-    "win": {
-      "extraResources": [
-        {
-          "from": "backend/dist/tapo-backend.exe",
-          "to": "backend/tapo-backend.exe"
-        }
-      ],
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "icon": "resources/icon.ico"
-    },
-    "mac": {
-      "extraResources": [
-        {
-          "from": "backend/dist/tapo-backend",
-          "to": "backend/tapo-backend"
-        }
-      ],
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "icon": "resources/icon.icns",
-      "category": "public.app-category.utilities"
-    },
-    "linux": {
-      "extraResources": [
-        {
-          "from": "backend/dist/tapo-backend",
-          "to": "backend/tapo-backend"
-        }
-      ],
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "icon": "resources/icon.png",
-      "category": "Utility"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+    "vite": "^6.0.0"
   }
 }

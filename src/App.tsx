@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
-import { HsvaColor, HsvaColorPicker } from 'react-colorful';
+import { HsvColor, HsvColorPicker } from 'react-colorful';
 import { TitleBar } from './components/TitleBar';
 import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles, Search, Plus, Trash2, RefreshCw, ChevronLeft, Settings } from 'lucide-react';
-
-const API = 'http://127.0.0.1:8742';
+import { invoke } from '@tauri-apps/api/core';
+import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
 
 interface DeviceInfo {
   ip: string;
@@ -37,19 +37,18 @@ export default function App() {
   const [autoStart, setAutoStart] = useState(false);
 
   // Control state for selected device
-  const [color, setColor] = useState<HsvaColor>({ h: 200, s: 100, v: 100, a: 1 });
+  const [color, setColor] = useState<HsvColor>({ h: 200, s: 100, v: 100 });
   const [brightness, setBrightness] = useState(100);
   const [colorTemp, setColorTemp] = useState(4000);
   const [mode, setMode] = useState<'color' | 'white'>('color');
 
-  const colorTimeout = useRef<NodeJS.Timeout>();
-  const brightnessTimeout = useRef<NodeJS.Timeout>();
-  const tempTimeout = useRef<NodeJS.Timeout>();
+  const colorTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const brightnessTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const tempTimeout = useRef<ReturnType<typeof setTimeout>>();
 
   const loadDevices = async () => {
     try {
-      const res = await fetch(`${API}/devices`);
-      const data = await res.json();
+      const data: { devices: DeviceInfo[] } = await invoke('list_devices');
       setDevices(data.devices);
       if (data.devices.length > 0 && !selectedDevice) {
         setSelectedDevice(data.devices[0].ip);
@@ -61,8 +60,7 @@ export default function App() {
 
   useEffect(() => {
     // Load auth status
-    fetch(`${API}/auth/status`)
-      .then(r => r.json())
+    invoke<{ authenticated: boolean; connected: boolean }>('auth_status')
       .then(async (statusData) => {
         if (statusData.authenticated) {
           setLoggedIn(true);
@@ -73,16 +71,18 @@ export default function App() {
       .finally(() => setLoading(false));
 
     // Load auto-start setting
-    window.electronAPI?.getAutoStart?.().then(setAutoStart).catch(() => {});
+    isEnabled().then(setAutoStart).catch(() => {});
 
     // Load saved credentials
-    window.electronAPI?.getSavedCredentials?.().then((creds) => {
-      if (creds) {
-        setEmail(creds.email || '');
-        setPassword(creds.password || '');
-        setRememberMe(creds.rememberMe || false);
-      }
-    }).catch(() => {});
+    invoke<{ email: string; password: string; rememberMe: boolean } | null>('get_saved_credentials')
+      .then((creds) => {
+        if (creds) {
+          setEmail(creds.email || '');
+          setPassword(creds.password || '');
+          setRememberMe(creds.rememberMe || false);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Load device info when selected device changes
@@ -90,12 +90,11 @@ export default function App() {
     if (selectedDevice) {
       const device = devices.find(d => d.ip === selectedDevice);
       if (device && device.connected) {
-        fetch(`${API}/device/info?ip=${selectedDevice}`)
-          .then(r => r.json())
+        invoke<{ brightness: number; hue: number | null; saturation: number | null }>('device_info', { ip: selectedDevice })
           .then(info => {
             setBrightness(info.brightness || 100);
             if (info.hue !== null) {
-              setColor(c => ({ ...c, h: info.hue, s: info.saturation }));
+              setColor(c => ({ ...c, h: info.hue!, s: info.saturation! }));
             }
           })
           .catch(() => {});
@@ -108,21 +107,15 @@ export default function App() {
     setConnecting(true);
     setError('');
     try {
-      const res = await fetch(`${API}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail);
+      await invoke('login', { req: { email, password, device_ip: null } });
       // Save credentials
-      await window.electronAPI?.saveCredentials?.({ email, password, rememberMe });
+      await invoke('save_credentials_local', { req: { email, password, rememberMe } });
       setLoggedIn(true);
       // Go straight to device discovery
       setShowAddDevice(true);
       scanNetwork();
     } catch (err) {
-      setError((err as Error).message);
+      setError(String(err));
     } finally {
       setConnecting(false);
     }
@@ -133,26 +126,20 @@ export default function App() {
     setConnecting(true);
     setError('');
     try {
-      const res = await fetch(`${API}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, device_ip: deviceIp }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail);
+      await invoke('login', { req: { email, password, device_ip: deviceIp } });
       setShowAddDevice(false);
       setDeviceIp('');
       await loadDevices();
       setSelectedDevice(deviceIp);
     } catch (err) {
-      setError((err as Error).message);
+      setError(String(err));
     } finally {
       setConnecting(false);
     }
   };
 
   const handleLogout = async () => {
-    await fetch(`${API}/auth/logout`, { method: 'POST' });
+    await invoke('logout');
     setLoggedIn(false);
     setDevices([]);
     setSelectedDevice(null);
@@ -161,11 +148,20 @@ export default function App() {
   const toggleAutoStart = async () => {
     const newValue = !autoStart;
     setAutoStart(newValue);
-    await window.electronAPI?.setAutoStart?.(newValue);
+    try {
+      if (newValue) {
+        await enable();
+      } else {
+        await disable();
+      }
+    } catch (err) {
+      console.error('Failed to toggle autostart:', err);
+      setAutoStart(!newValue); // revert
+    }
   };
 
   const handleRemoveDevice = async (ip: string) => {
-    await fetch(`${API}/devices/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+    await invoke('delete_device', { ip });
     await loadDevices();
     if (selectedDevice === ip) {
       setSelectedDevice(devices.find(d => d.ip !== ip)?.ip || null);
@@ -174,7 +170,7 @@ export default function App() {
 
   const handleReconnect = async (ip: string) => {
     try {
-      await fetch(`${API}/devices/${encodeURIComponent(ip)}/reconnect`, { method: 'POST' });
+      await invoke('reconnect_device', { ip });
       await loadDevices();
     } catch (err) {
       console.error('Reconnect failed:', err);
@@ -185,13 +181,12 @@ export default function App() {
     setScanning(true);
     setDiscoveredDevices([]);
     try {
-      const res = await fetch(`${API}/discover`);
-      const data = await res.json();
+      const data: { potential_devices: { ip: string }[] } = await invoke('discover_devices_cmd');
       const existingIps = devices.map(d => d.ip);
       setDiscoveredDevices(
         data.potential_devices
-          .map((d: { ip: string }) => d.ip)
-          .filter((ip: string) => !existingIps.includes(ip))
+          .map((d) => d.ip)
+          .filter((ip) => !existingIps.includes(ip))
       );
     } catch (err) {
       console.error('Scan failed:', err);
@@ -205,11 +200,7 @@ export default function App() {
   const togglePower = async () => {
     if (!currentDevice) return;
     const newState = !currentDevice.device_on;
-    await fetch(`${API}/device/power`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ on: newState, ip: selectedDevice }),
-    });
+    await invoke('device_power', { req: { on: newState, ip: selectedDevice } });
     await loadDevices();
   };
 
@@ -217,23 +208,15 @@ export default function App() {
     setBrightness(val);
     clearTimeout(brightnessTimeout.current);
     brightnessTimeout.current = setTimeout(async () => {
-      await fetch(`${API}/device/brightness`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: val, ip: selectedDevice }),
-      });
+      await invoke('device_brightness', { req: { value: val, ip: selectedDevice } });
     }, 100);
   };
 
-  const handleColorChange = (newColor: HsvaColor) => {
+  const handleColorChange = (newColor: HsvColor) => {
     setColor(newColor);
     clearTimeout(colorTimeout.current);
     colorTimeout.current = setTimeout(async () => {
-      await fetch(`${API}/device/color`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hue: Math.round(newColor.h), saturation: Math.round(newColor.s), ip: selectedDevice }),
-      });
+      await invoke('device_color', { req: { hue: Math.round(newColor.h), saturation: Math.round(newColor.s), ip: selectedDevice } });
     }, 100);
   };
 
@@ -241,11 +224,7 @@ export default function App() {
     setColorTemp(val);
     clearTimeout(tempTimeout.current);
     tempTimeout.current = setTimeout(async () => {
-      await fetch(`${API}/device/temperature`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kelvin: val, ip: selectedDevice }),
-      });
+      await invoke('device_temperature', { req: { kelvin: val, ip: selectedDevice } });
     }, 100);
   };
 
@@ -263,11 +242,7 @@ export default function App() {
   const applyQuickColor = async (h: number, s: number) => {
     setColor({ ...color, h, s });
     setMode('color');
-    await fetch(`${API}/device/color`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hue: h, saturation: s, ip: selectedDevice }),
-    });
+    await invoke('device_color', { req: { hue: h, saturation: s, ip: selectedDevice } });
   };
 
   if (loading) {
@@ -535,7 +510,7 @@ export default function App() {
               {mode === 'color' ? (
                 <>
                   <div className="bg-zinc-900/50 rounded-xl p-3 mb-3">
-                    <HsvaColorPicker color={color} onChange={handleColorChange} />
+                    <HsvColorPicker color={color} onChange={handleColorChange} />
                   </div>
                   <div className="grid grid-cols-8 gap-1.5">
                     {quickColors.map((c, i) => (

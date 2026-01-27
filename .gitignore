@@ -1,15 +1,13 @@
 # Dependencies
 node_modules/
-__pycache__/
-*.pyc
-.venv/
-venv/
 
 # Build outputs
 dist/
 dist-electron/
 build/
-*.egg-info/
+
+# Rust / Tauri
+src-tauri/target/
 
 # IDE
 .idea/
@@ -29,18 +27,6 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
-
-# Backend data
-backend/data/
-
-# PyInstaller
-backend/dist/
-backend/build/
-*.spec.bak
-
-# Electron
-release/
-*.asar
 
 # Testing
 coverage/
