@@ -1,0 +1,26 @@
+---
+description: Pruebas, compilación Windows, CI/CD, instaladores y documentación de resultados.
+alwaysApply: false
+---
+
+# Calidad, verificación y distribución
+
+## Durante T1
+- Verificar versiones instaladas de Node.js, npm, Rust, cargo, MSVC Build Tools y requisitos Tauri/WebView2 en Windows 11.
+- Revisar primero los scripts de `package.json` y workflows. Instalar dependencias con `npm ci` si el lockfile lo permite; no ejecutar actualizaciones masivas.
+- Comprobar la construcción frontend y Rust con comandos existentes; registrar qué se ejecutó, salida relevante y PASS/FAIL.
+- No afirmar que compiló si no se pudo ejecutar el comando ni que los efectos funcionan sin pruebas sobre hardware real.
+
+## En tareas autorizadas de implementación
+- Agregar tests focalizados donde aporten evidencia: validación IPC, mapeos de efectos, selección de dispositivo, serialización y migración de configuración.
+- No depender de luces físicas para la suite normal de CI. Mantener pruebas físicas en checklist manual con evidencia.
+- No romper `npm run dev`, `npm run build`, encendido, color o brillo.
+- Priorizar Windows CI en pull requests; releases solo bajo autorización, con compilación y validación previas.
+- No generar ni publicar instaladores/tags desde una tarea de auditoría.
+- Diferenciar pruebas unitarias, integración simulada, build Windows y smoke test con dispositivos.
+
+## Documentación
+- Documentar arquitectura, dependencias verificadas, riesgos y resultados de T1 en `docs/architecture-audit.md` **solo si la tarea permite crear documentación**.
+- Registrar decisiones técnicas con fundamento, alternativas descartadas, trade-offs y efecto en compatibilidad upstream.
+- Mantener README/licencia/avisos originales; cambiar la documentación solo dentro del alcance aprobado.
+- Reporte final: cambios, pruebas PASS/FAIL, evidencia física pendiente y riesgos residuales.

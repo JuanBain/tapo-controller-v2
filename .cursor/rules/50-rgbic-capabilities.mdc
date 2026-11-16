@@ -1,0 +1,18 @@
+---
+description: Investigación, validación e implementación incremental de efectos Tapo L930 RGBIC y control de segmentos.
+alwaysApply: false
+---
+
+# RGBIC: investigación antes de implementación
+
+- Antes de crear un motor de iluminación propio, inspeccionar `src-tauri/src/device.rs` y la versión **resuelta** de `tapo` en Cargo.lock (si existe), junto a la API de `RgbicLightStripHandler` y los tipos de efectos disponibles.
+- El upstream contiene `set_effect()` con presets y `available_effects()`; verificar si React realmente consume esos comandos y si los efectos funcionan en la L930-5 real.
+- Investigar capacidades concretas de la versión instalada: efectos predefinidos, parámetros como brillo/velocidad, efectos personalizados, control por segmentos y lectura del estado actual.
+- No equiparar "RGBIC" con control independiente de cada LED: la granularidad real de segmentos debe determinarse por documentación y pruebas.
+- Para cada capacidad registrar: fuente/API, versión de dependencia, límites de parámetros, soporte del modelo/firmware, resultado físico y mensajes de error.
+- No construir ni enviar solicitudes crudas del protocolo sin justificar por qué la API disponible es insuficiente y sin autorización.
+- Probar primero en **una** L930-5; luego repetir con la segunda antes de declarar soporte multi-dispositivo.
+- Cuando haya efectos experimentales, señalarlos claramente en backend y UI; incluir tratamiento de dispositivos desconectados y rutas de recuperación.
+- Evitar animaciones generadas con comandos de red de alta frecuencia antes de demostrar estabilidad, rendimiento y límites del dispositivo.
+- Si se necesita sincronización entre tiras, documentar que una secuencia de comandos no equivale a sincronización temporal precisa; medir antes de prometer simultaneidad.
+- No iniciar T2 hasta que el usuario apruebe explícitamente el cierre de T1.

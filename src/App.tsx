@@ -42,9 +42,9 @@ export default function App() {
   const [colorTemp, setColorTemp] = useState(4000);
   const [mode, setMode] = useState<'color' | 'white'>('color');
 
-  const colorTimeout = useRef<ReturnType<typeof setTimeout>>();
-  const brightnessTimeout = useRef<ReturnType<typeof setTimeout>>();
-  const tempTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const colorTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const brightnessTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const tempTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const loadDevices = async () => {
     try {
@@ -107,9 +107,8 @@ export default function App() {
     setConnecting(true);
     setError('');
     try {
-      await invoke('login', { req: { email, password, device_ip: null } });
-      // Save credentials
-      await invoke('save_credentials_local', { req: { email, password, rememberMe } });
+      await invoke('login', { req: { email, password, device_ip: null, remember_me: rememberMe } });
+      setPassword('');
       setLoggedIn(true);
       // Go straight to device discovery
       setShowAddDevice(true);
@@ -126,11 +125,11 @@ export default function App() {
     setConnecting(true);
     setError('');
     try {
-      await invoke('login', { req: { email, password, device_ip: deviceIp } });
+      const res = await invoke<{ device: { ip: string } }>('add_device', { ip: deviceIp });
       setShowAddDevice(false);
       setDeviceIp('');
       await loadDevices();
-      setSelectedDevice(deviceIp);
+      setSelectedDevice(res.device.ip);
     } catch (err) {
       setError(String(err));
     } finally {

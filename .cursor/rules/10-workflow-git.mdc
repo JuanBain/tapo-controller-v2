@@ -1,0 +1,38 @@
+---
+description: Flujo de trabajo por tareas, aprobaciones, Git y sincronización del fork.
+alwaysApply: true
+---
+
+# Flujo de trabajo y Git
+
+## Antes de modificar código
+1. Identificar tarea y fase expresamente solicitadas. Si el usuario pide auditoría, **solo auditar**; si pide propuesta, **solo proponer**.
+2. Inspeccionar los archivos, dependencias, scripts y comportamiento existentes que afecten la tarea.
+3. Entregar un plan corto con alcance, archivos previstos, riesgos, validaciones y criterios de aceptación.
+4. Esperar autorización de implementación cuando todavía no haya sido otorgada. Una petición expresa de implementar una tarea identificada cuenta como autorización para esa tarea, no para otras.
+5. Trabajar con el cambio mínimo y coherente. No iniciar por cuenta propia otra fase, refactor general ni rediseño.
+
+## Reglas Git obligatorias
+- Preservar la rama upstream predeterminada `master` como referencia; verificar su existencia antes de actuar.
+- Fork: `origin/master` (estable) y `origin/develop` (integración); `feature/<tarea>-<descripcion>` desde `develop` para nuevas implementaciones.
+- Configurar `upstream` a `https://github.com/BartaG512/tapo-controller.git` **solo si falta**; verificar `git remote -v` antes.
+- El usuario solo ha clonado su fork: **no asumir que `develop` ya existe**.
+- Cada tarea en una rama feature; PR hacia `develop`; squash merge tras revisión y aprobación.
+- No utilizar **Git worktrees**.
+- No hacer commits, push, merges, rebase, cambios de ramas remotas, etiquetas, releases, eliminación de ramas ni modificaciones de GitHub sin solicitud o aprobación explícita.
+- No ejecutar nunca `git push --force`, `reset --hard`, `clean -fd`, sobrescribir trabajo local, ni descartar cambios del usuario sin autorización.
+- Sincronizar upstream mediante una operación trazable y revisada; no sobrescribir directamente los cambios del fork.
+- Conservar la licencia **MIT**, el aviso copyright original y las atribuciones exigidas. No remover autoría upstream.
+- Antes de cambiar identificador, nombre de producto o rutas de datos de la aplicación, explicar impactos sobre instalaciones y credenciales existentes.
+
+## Contrato de entrega de cada tarea
+- Objetivo y alcance completados / no completados.
+- Archivos modificados y motivo.
+- Comandos y pruebas ejecutados con PASS/FAIL y errores textuales sanitizados (sin secretos).
+- Funcionalidades verificadas por hardware vs pendientes de probar físicamente.
+- Riesgos, limitaciones y próximos pasos **solo como propuesta**.
+- No reportar éxito si no fue probado; distinguir compilación, tests y pruebas físicas.
+
+## Regla especial: fase de inicio
+- Hasta que el usuario autorice T1.1/T1.2, limitarse a inspeccionar, documentar y planificar.
+- No introducir funciones RGBIC nuevas, modificar credenciales o rediseñar la UI como parte de una auditoría de solo lectura.
