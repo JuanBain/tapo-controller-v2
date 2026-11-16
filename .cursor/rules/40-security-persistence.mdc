@@ -1,0 +1,17 @@
+---
+description: Seguridad de credenciales, persistencia local, logs y configuración de Tauri.
+alwaysApply: true
+---
+
+# Seguridad y persistencia — regla prioritaria
+
+- **Nunca** colocar passwords, tokens, claves, cookies o respuestas sensibles en código fuente, tests versionados, capturas, reportes, logs, archivos `.env` comprometidos ni comentarios.
+- Para almacenamiento de secretos usar un mecanismo seguro del sistema (p. ej. Windows Credential Manager mediante `keyring`) y verificar que las rutas de ejecución realmente lo usan.
+- Hallazgo de auditoría del upstream: `src-tauri/src/storage.rs` contiene `Credentials { password }` y guarda `credentials.json` en texto plano; `login()` en `commands.rs` lo invoca. Es un **riesgo que debe validarse en el checkout**, no darlo por arreglado porque existe `credentials.rs`.
+- Si se autoriza corregirlo: diseñar migración conservadora desde credenciales existentes, recuperación ante fallos, ausencia de exposición en logs y respaldo de configuraciones no secretas. Evitar mostrar, copiar o commitear la contraseña real. No hacer borrados destructivos antes de validar migración.
+- No solicitar nunca al usuario credenciales de Tapo dentro de Cursor ni en el chat; usar la UI de la app y el keyring.
+- Separar secretos de dispositivos, presets, horarios y preferencias. Validar esquemas y gestionar errores de serialización/escritura; evitar pérdida silenciosa de datos.
+- No almacenar identificadores sensibles adicionales si no son imprescindibles. Excluir secretos de telemetría; no añadir telemetría/cloud no solicitados.
+- Revisar `tauri.conf.json`: permisos mínimos, CSP, comandos expuestos y permisos de plugins; no desactivar controles de seguridad solo para avanzar rápidamente.
+- No ejecutar scripts de red, descubrimiento agresivo o ingeniería inversa sobre redes/dispositivos no autorizados. Las pruebas se limitan a las luces propias del usuario.
+- Mantener dependencias y lockfiles bajo control. Corregir vulnerabilidades con cambios puntuales, revisados y probados.

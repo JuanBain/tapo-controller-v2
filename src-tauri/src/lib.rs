@@ -4,6 +4,7 @@ mod commands;
 mod scheduler;
 mod discovery;
 mod credentials;
+mod validation;
 
 use std::sync::Arc;
 use tauri::{
@@ -12,33 +13,66 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     WindowEvent,
 };
-use log::info;
+use log::{info, warn};
 
-use device::{new_device_manager, TapoDevice};
+use device::{get_target, new_device_manager, TapoDevice};
 use storage::Storage;
-use commands::{StorageState, SchedulerState};
+use credentials::{CredentialManager, KeyringSecretStore};
+use commands::{CredentialsState, StorageState, SchedulerState};
 
-/// Auto-reconnect to all saved devices on startup
+/// Auto-reconnect to all saved devices on startup.
+/// Returns `(saved, reconnected)`.
 async fn auto_reconnect(
     device_manager: &device::DeviceManager,
     storage: &Storage,
-) {
-    if let Some(creds) = storage.load_credentials() {
-        let saved = storage.get_saved_devices();
-        for saved_dev in saved {
-            let mut device = TapoDevice::new(&creds.email, &creds.password);
-            match device.connect(&saved_dev.ip).await {
-                Ok(info) => {
-                    info!("Auto-connected to {} ({})", saved_dev.ip, info.nickname);
-                    let mut dm = device_manager.write().await;
-                    dm.insert(saved_dev.ip.clone(), device);
-                }
-                Err(e) => {
-                    info!("Auto-connect to {} failed: {}", saved_dev.ip, e);
-                }
+    credentials: &CredentialManager,
+) -> (usize, usize) {
+    let saved = storage.get_saved_devices();
+    let Some(session) = credentials.session() else {
+        return (saved.len(), 0);
+    };
+    let mut reconnected = 0;
+    for saved_dev in &saved {
+        let mut device = TapoDevice::new(&session.email, &session.password);
+        match device.connect(&saved_dev.ip).await {
+            Ok(info) => {
+                info!("Auto-connected to {} ({})", saved_dev.ip, info.nickname);
+                device_manager.write().await.insert(saved_dev.ip.clone(), Arc::new(device));
+                reconnected += 1;
+            }
+            Err(e) => {
+                warn!("Auto-connect to {} failed: {}", saved_dev.ip, e);
             }
         }
     }
+    (saved.len(), reconnected)
+}
+
+/// Tray actions only run when the target is unambiguous (one connected device).
+fn spawn_tray_action(dm: device::DeviceManager, brightness: Option<u8>, on: bool) {
+    tauri::async_runtime::spawn(async move {
+        let device = match get_target(&dm, None).await {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Tray action skipped: {}", e);
+                return;
+            }
+        };
+        let result = if on {
+            match device.turn_on().await {
+                Ok(()) => match brightness {
+                    Some(b) => device.set_brightness(b).await,
+                    None => Ok(()),
+                },
+                Err(e) => Err(e),
+            }
+        } else {
+            device.turn_off().await
+        };
+        if let Err(e) = result {
+            warn!("Tray action failed: {}", e);
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,28 +93,46 @@ pub fn run() {
             let storage = Arc::new(Storage::new(app_data_dir));
             let device_manager = new_device_manager();
 
+            // Migration and session restore run before any command can be
+            // invoked, so `auth_status` never races with them.
+            let credentials = Arc::new(CredentialManager::new(Box::new(KeyringSecretStore), storage.clone()));
+            let restore_report = credentials.restore();
+
             // Store state for commands
             app.manage(StorageState(storage.clone()));
+            app.manage(CredentialsState(credentials.clone()));
             app.manage(device_manager.clone());
 
-            // Auto-reconnect and start scheduler in background
+            // Start scheduler, then auto-reconnect, in background
             let dm_clone = device_manager.clone();
             let storage_clone = storage.clone();
             let app_handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
-                // Auto-reconnect saved devices
-                auto_reconnect(&dm_clone, &storage_clone).await;
-
-                // Start scheduler
-                match scheduler::create_scheduler_manager(dm_clone, storage_clone).await {
+                match scheduler::create_scheduler_manager(dm_clone.clone(), storage_clone.clone()).await {
                     Ok(scheduler_mgr) => {
                         app_handle.manage(SchedulerState(scheduler_mgr));
                         info!("Scheduler started");
                     }
                     Err(e) => {
-                        info!("Failed to start scheduler: {}", e);
+                        warn!("Failed to start scheduler: {}", e);
                     }
+                }
+
+                let (saved, reconnected) = auto_reconnect(&dm_clone, &storage_clone, &credentials).await;
+                match credentials::legacy_cleanup_decision(&restore_report, saved, reconnected) {
+                    credentials::LegacyCleanup::Removed => {
+                        match storage_clone.remove_legacy_credentials() {
+                            Ok(()) => info!(
+                                "Removed data/credentials.json after the password was recovered from Windows Credential Manager and every saved device reconnected"
+                            ),
+                            Err(e) => warn!("data/credentials.json was kept: {}", e),
+                        }
+                    }
+                    credentials::LegacyCleanup::Kept(reason) => {
+                        warn!("Keeping data/credentials.json: {}", reason);
+                    }
+                    credentials::LegacyCleanup::NotPresent => {}
                 }
             });
 
@@ -118,38 +170,15 @@ pub fn run() {
                                 window.set_focus().ok();
                             }
                         }
-                        "turn_on" => {
-                            let dm = dm.inner().clone();
-                            tauri::async_runtime::spawn(async move {
-                                let devices = dm.read().await;
-                                if let Some(device) = devices.values().next() {
-                                    device.turn_on().await.ok();
-                                }
-                            });
-                        }
-                        "turn_off" => {
-                            let dm = dm.inner().clone();
-                            tauri::async_runtime::spawn(async move {
-                                let devices = dm.read().await;
-                                if let Some(device) = devices.values().next() {
-                                    device.turn_off().await.ok();
-                                }
-                            });
-                        }
+                        "turn_on" => spawn_tray_action(dm.inner().clone(), None, true),
+                        "turn_off" => spawn_tray_action(dm.inner().clone(), None, false),
                         "brightness_25" | "brightness_50" | "brightness_100" => {
                             let brightness: u8 = match event.id.as_ref() {
                                 "brightness_25" => 25,
                                 "brightness_50" => 50,
                                 _ => 100,
                             };
-                            let dm = dm.inner().clone();
-                            tauri::async_runtime::spawn(async move {
-                                let devices = dm.read().await;
-                                if let Some(device) = devices.values().next() {
-                                    device.turn_on().await.ok();
-                                    device.set_brightness(brightness).await.ok();
-                                }
-                            });
+                            spawn_tray_action(dm.inner().clone(), Some(brightness), true);
                         }
                         "quit" => {
                             app.exit(0);
@@ -190,6 +219,7 @@ pub fn run() {
             commands::auth_status,
             commands::last_ip,
             commands::list_devices,
+            commands::add_device,
             commands::delete_device,
             commands::reconnect_device,
             commands::discover_devices_cmd,

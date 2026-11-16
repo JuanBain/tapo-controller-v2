@@ -1,0 +1,39 @@
+---
+description: Contexto general, alcance y decisiones del proyecto Tapo Controller RGBIC Desktop.
+alwaysApply: true
+---
+
+# Tapo Controller — RGBIC Desktop | Contexto obligatorio
+
+## Producto y estado actual
+- Extender mediante un **fork** el proyecto upstream `BartaG512/tapo-controller`; no reescribir la aplicación desde cero.
+- Destino prioritario: **Windows 11**, control local mediante Wi-Fi de **dos tiras TP-Link Tapo L930-5 RGBICW de 5 m** (una detrás y otra debajo del escritorio).
+- Las tiras ya están configuradas en la app oficial Tapo y Third-Party Compatibility está activado.
+- La versión original instalada permitió al usuario conectar **una** tira y controlar encendido, color uniforme y brillo. No extrapolar ese resultado a las dos tiras ni a los efectos RGBIC.
+- Estado del fork al iniciar estas reglas: **el usuario únicamente hizo fork y clone**. No asumir que `upstream` o `develop` existen, que compila localmente, ni que hay cambios propios.
+
+## Stack de referencia (verificar en los archivos reales)
+- React + TypeScript + Vite + Tailwind CSS.
+- Tauri 2 con backend Rust y Tokio.
+- Biblioteca Rust `tapo` para comunicación con las luces.
+- Persistencia local; Windows Credential Manager vía `keyring` cuando sea apropiado.
+- No introducir servicios cloud, bases de datos remotas, microservicios ni frameworks nuevos sin necesidad demostrada y aprobación.
+
+## Fuente de verdad
+- Priorizar código, manifests, lockfiles, documentación y pruebas del checkout actual sobre este contexto.
+- Si una regla no coincide con el código actual, **informar la diferencia** antes de actuar.
+- No confundir una funcionalidad en el código con compatibilidad comprobada en el firmware/hardware.
+- Clasificar soporte como: **verificado por código**, **verificado físicamente**, **documentado por dependencia**, **hipótesis/experimental** o **no soportado**.
+- No inventar comandos, endpoints, rangos de parámetros, características RGBIC ni resultados de pruebas.
+
+## Prioridades de producto
+1. Mantener encendido, apagado, color uniforme y brillo existentes.
+2. Seguridad de credenciales y control estable de dos dispositivos.
+3. Investigar/validar efectos RGBIC existentes y después parámetros compatibles.
+4. Escenas y control por dispositivo o conjunto.
+5. UX, automatizaciones y distribución Windows.
+
+## Alcance
+- El desarrollo sigue T1 auditoría/preparación → T2 RGBIC → T3 escenas/múltiples tiras → T4 UX → T5 pruebas/instalador.
+- **No avanzar de fase ni implementar nuevas funcionalidades sin aprobación explícita del usuario.**
+- Mantener respuestas, reportes y documentación de colaboración en **español**; identificadores y código pueden permanecer en inglés.

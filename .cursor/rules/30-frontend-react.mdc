@@ -1,0 +1,20 @@
+---
+description: Convenciones de React, TypeScript e interfaz Tauri del proyecto.
+globs: src/**/*.ts, src/**/*.tsx, src/**/*.css
+alwaysApply: false
+---
+
+# React, TypeScript y UX
+
+- Mantener React + TypeScript + Vite + Tailwind existentes; no añadir librerías de estado o UI por conveniencia.
+- Antes de modificar `App.tsx`, leer los flujos de login, descubrimiento, conexión, selección de dispositivo y controles existentes.
+- Encapsular llamadas `invoke(...)` en funciones tipadas y contratos explícitos cuando la tarea lo justifique; no duplicar lógica de IPC entre vistas.
+- Mantener estados diferenciados: loading, conectado, desconectado, error, capacidad disponible, experimental y no soportado.
+- En controles multi-dispositivo, hacer visible el destino: tira individual, selección múltiple o todas. Evitar aplicar escenas a dispositivos inesperados.
+- Deshabilitar u ocultar controles RGBIC cuando el dispositivo seleccionado no soporte la capacidad confirmada.
+- No mostrar un efecto como aplicado sin confirmación del backend; diferenciar estado optimista y estado confirmado.
+- Usar debounce/limitación de frecuencia para sliders de brillo/color; evitar condiciones de carrera al cambiar rápidamente el dispositivo activo.
+- No imprimir contraseñas, tokens, credenciales ni respuestas sensibles en la consola del frontend.
+- Mantener accesibilidad mínima: botones con nombre, navegación de teclado, estados de foco y contraste legible.
+- No rediseñar pantallas ni alterar estilos ajenos a la tarea sin aprobación específica.
+- Probar interacciones clave y errores del frontend según la herramienta de testing aprobada.

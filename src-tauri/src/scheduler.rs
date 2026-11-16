@@ -4,8 +4,9 @@ use tokio::sync::RwLock;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use log::{info, error};
 
-use crate::device::DeviceManager;
+use crate::device::{get_target, DeviceManager};
 use crate::storage::{Schedule, Storage};
+use crate::validation;
 
 pub struct SchedulerState {
     scheduler: JobScheduler,
@@ -30,10 +31,9 @@ impl SchedulerState {
     }
 
     /// Convert a Schedule's time + days into a cron expression
-    fn schedule_to_cron(schedule: &Schedule) -> String {
-        let parts: Vec<&str> = schedule.time.split(':').collect();
-        let hour = parts.get(0).unwrap_or(&"0");
-        let minute = parts.get(1).unwrap_or(&"0");
+    fn schedule_to_cron(schedule: &Schedule) -> Result<String, String> {
+        let (hour, minute) = validation::schedule_time(&schedule.time)?;
+        validation::schedule_days(&schedule.days)?;
 
         let days_of_week = if schedule.days.is_empty() {
             "*".to_string()
@@ -51,7 +51,7 @@ impl SchedulerState {
         };
 
         // sec min hour day_of_month month day_of_week
-        format!("0 {} {} * * {}", minute, hour, days_of_week)
+        Ok(format!("0 {} {} * * {}", minute, hour, days_of_week))
     }
 
     pub async fn add_schedule_job(&mut self, schedule: &Schedule) -> Result<(), String> {
@@ -62,7 +62,7 @@ impl SchedulerState {
         // Remove existing job if any
         self.remove_schedule_job(&schedule.id).await.ok();
 
-        let cron_expr = Self::schedule_to_cron(schedule);
+        let cron_expr = Self::schedule_to_cron(schedule)?;
         let schedule_clone = schedule.clone();
         let dm = self.device_manager.clone();
         let storage = self.storage.clone();
@@ -104,7 +104,9 @@ impl SchedulerState {
         let schedules = self.storage.get_schedules();
         for schedule in schedules {
             if schedule.enabled {
-                self.add_schedule_job(&schedule).await?;
+                if let Err(e) = self.add_schedule_job(&schedule).await {
+                    error!("Skipping schedule {}: {}", schedule.name, e);
+                }
             }
         }
         Ok(())
@@ -118,61 +120,33 @@ impl SchedulerState {
 
 /// Execute a scheduled action on a device
 async fn execute_schedule(schedule: &Schedule, device_manager: &DeviceManager, storage: &Storage) {
-    let devices = device_manager.read().await;
-    let device = match devices.values().next() {
-        Some(d) => d,
-        None => {
-            error!("Cannot execute schedule {}: No device connected", schedule.name);
+    let device = match get_target(device_manager, schedule.device_ip.as_deref()).await {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Cannot execute schedule {}: {}", schedule.name, e);
             return;
         }
     };
 
     let result = match schedule.action.as_str() {
-        "on" => {
-            if let Err(e) = device.turn_on().await {
-                error!("Schedule {} turn_on failed: {}", schedule.name, e);
-                return;
-            }
-            if let Some(brightness) = schedule.brightness {
-                device.set_brightness(brightness as u8).await
-            } else {
-                Ok(())
-            }
-        }
+        "on" => match schedule.brightness.map(validation::brightness).transpose() {
+            Err(e) => Err(e),
+            Ok(brightness) => match device.turn_on().await {
+                Err(e) => Err(e),
+                Ok(()) => match brightness {
+                    Some(b) => device.set_brightness(b).await,
+                    None => Ok(()),
+                },
+            },
+        },
         "off" => device.turn_off().await,
-        "preset" => {
-            if let Some(ref preset_id) = schedule.preset_id {
-                if let Some(preset) = storage.get_preset(preset_id) {
-                    if let Err(e) = device.turn_on().await {
-                        error!("Schedule {} turn_on failed: {}", schedule.name, e);
-                        return;
-                    }
-                    if let Err(e) = device.set_brightness(preset.brightness as u8).await {
-                        error!("Schedule {} set_brightness failed: {}", schedule.name, e);
-                        return;
-                    }
-                    if let (Some(hue), Some(sat)) = (preset.hue, preset.saturation) {
-                        if let Err(e) = device.set_color(hue as u16, sat as u8).await {
-                            error!("Schedule {} set_color failed: {}", schedule.name, e);
-                        }
-                    } else if let Some(temp) = preset.color_temperature {
-                        if let Err(e) = device.set_color_temperature(temp as u16).await {
-                            error!("Schedule {} set_temp failed: {}", schedule.name, e);
-                        }
-                    }
-                    if let Some(ref effect) = preset.effect {
-                        if let Err(e) = device.set_effect(effect).await {
-                            error!("Schedule {} set_effect failed: {}", schedule.name, e);
-                        }
-                    }
-                    Ok(())
-                } else {
-                    Err(format!("Preset {} not found", preset_id))
-                }
-            } else {
-                Err("No preset_id for preset action".to_string())
-            }
-        }
+        "preset" => match schedule.preset_id.as_deref() {
+            Some(preset_id) => match storage.get_preset(preset_id) {
+                Some(preset) => device.apply_preset(&preset).await,
+                None => Err(format!("Preset {} not found", preset_id)),
+            },
+            None => Err("No preset_id for preset action".to_string()),
+        },
         _ => Err(format!("Unknown action: {}", schedule.action)),
     };
 
@@ -190,4 +164,32 @@ pub async fn create_scheduler_manager(
     state.reload_all_schedules().await?;
     state.start().await?;
     Ok(Arc::new(RwLock::new(state)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schedule(time: &str, days: Vec<i32>) -> Schedule {
+        Schedule {
+            id: "s1".into(), name: "test".into(), time: time.into(), days,
+            action: "on".into(), preset_id: None, brightness: None, enabled: true,
+            created_at: String::new(), device_ip: None,
+        }
+    }
+
+    #[test]
+    fn cron_maps_monday_based_days() {
+        let cron = SchedulerState::schedule_to_cron(&schedule("07:30", vec![0, 6])).unwrap();
+        assert_eq!(cron, "0 30 7 * * 1,0");
+        let every_day = SchedulerState::schedule_to_cron(&schedule("23:05", vec![])).unwrap();
+        assert_eq!(every_day, "0 5 23 * * *");
+    }
+
+    #[test]
+    fn cron_rejects_invalid_input() {
+        assert!(SchedulerState::schedule_to_cron(&schedule("7", vec![])).is_err());
+        assert!(SchedulerState::schedule_to_cron(&schedule("*/1:00", vec![])).is_err());
+        assert!(SchedulerState::schedule_to_cron(&schedule("07:00", vec![9])).is_err());
+    }
 }

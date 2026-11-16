@@ -1,0 +1,21 @@
+---
+description: Convenciones de Rust, comandos Tauri y comunicación local con Tapo.
+globs: src-tauri/**/*.rs, src-tauri/Cargo.toml
+alwaysApply: false
+---
+
+# Rust, Tauri y acceso a dispositivos
+
+- Leer primero `src-tauri/src/device.rs`, `commands.rs`, `lib.rs`, `discovery.rs` y `Cargo.toml`, según corresponda.
+- Respetar la arquitectura actual. `commands.rs` es la frontera IPC; `device.rs` encapsula la interacción con la biblioteca `tapo`.
+- Preferir extender abstracciones existentes a reemplazarlas. Refactorizar solo por necesidad concreta y sin alterar comportamiento no relacionado.
+- Validar en la frontera IPC hue, saturation, brightness, temperatura, velocidad, índices de segmento, IP/identificador y cualquier parámetro externo. Evitar conversiones con `as` que trunquen valores inesperadamente.
+- Manejar resultados y errores explícitamente; no ocultar fallos ni usar `unwrap()`/`expect()` en rutas recuperables.
+- No retener bloqueos globales de `RwLock` durante operaciones de red potencialmente lentas si se puede evitar con seguridad.
+- No seleccionar arbitrariamente el primer elemento de un `HashMap` al controlar múltiples dispositivos. Exigir destino explícito o un dispositivo activo definido y verificable.
+- Implementar timeouts, errores de desconexión y reconexión de forma predecible; no enviar ráfagas ilimitadas de comandos.
+- Mantener distinción entre dispositivos RGB y RGBIC y comprobar capacidades antes de enviar comandos no soportados.
+- No suponer que `ApiClient::l930()` demuestra el modelo físico hasta verificar metadata/identidad devuelta.
+- Toda función de control debe tener una estrategia de pruebas aislada mediante mocks o wrappers; las pruebas físicas son complementarias.
+- Mantener las comunicaciones locales y el uso de la biblioteca Rust actual; no implementar protocolo alternativo sin pruebas y autorización.
+- Antes de actualizar `tapo`, Tauri o dependencias Rust, justificar compatibilidad, cambios de API y regresiones; conservar lockfiles reproducibles.
