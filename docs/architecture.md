@@ -59,7 +59,7 @@ La comunicación con las tiras es **local por Wi-Fi** mediante el crate `tapo`. 
 2. **Alta** (`add_device`): `TapoDevice::connect(ip)`, que hace un único login `ApiClient::l930(ip)` con un timeout de 10 s y después `get_device_info()`. Solo si tiene éxito se inserta en `DeviceManager` y se persiste en `devices.json`.
 3. **Control** (`device_power`, `device_brightness`, `device_color`, `device_temperature`, `device_effect`): validación → `get_target(ip)` → clon del `Arc<TapoDevice>` → **se libera el lock** → petición de red.
 4. **Arranque**: `restore()` síncrono (migración y sesión) → scheduler → `auto_reconnect` secuencial de `devices.json` con la sesión restaurada.
-5. **Reconexión manual** (`reconnect_device`): nuevo `TapoDevice` con la sesión actual, que sustituye al anterior en el mapa.
+5. **Reconexión manual** (`reconnect_device`): nuevo `TapoDevice` con la sesión actual, que sustituye al anterior en el mapa. Desde la estabilización de T2, las escrituras a una misma IP comparten una `CommandGate` (`device::gate_for`) aunque la conexión se sustituya. El login de esa reconexión y las lecturas no pasan por la puerta. Las credenciales no cambian: siguen las de `docs/security.md`.
 
 ### Selección de destino
 `resolve_target(map, ip)`: con IP explícita usa esa o devuelve error. Sin IP solo se acepta si hay **exactamente un** dispositivo conectado. Con varios, devuelve error. La bandeja y los horarios sin `device_ip` siguen esta regla.

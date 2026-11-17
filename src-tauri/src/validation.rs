@@ -9,6 +9,10 @@ pub const BRIGHTNESS_RANGE: (i32, i32) = (1, 100);
 pub const HUE_RANGE: (i32, i32) = (0, 360);
 pub const SATURATION_RANGE: (i32, i32) = (1, 100);
 pub const COLOR_TEMPERATURE_RANGE: (i32, i32) = (2500, 6500);
+/// `tapo` does not validate effect colors. Its presets use saturation 0–100
+/// (0 is white) and value 0–100; value 0 (unlit) is not accepted here.
+pub const EFFECT_SATURATION_RANGE: (i32, i32) = (0, 100);
+pub const EFFECT_VALUE_RANGE: (i32, i32) = (1, 100);
 
 pub const SCHEDULE_ACTIONS: [&str; 3] = ["on", "off", "preset"];
 
@@ -33,6 +37,16 @@ pub fn hue(value: i32) -> Result<u16, String> {
 pub fn saturation(value: i32) -> Result<u8, String> {
     let v = in_range("saturation", value, SATURATION_RANGE)?;
     u8::try_from(v).map_err(|_| "saturation out of range".to_string())
+}
+
+pub fn effect_saturation(value: i32) -> Result<u16, String> {
+    let v = in_range("saturation", value, EFFECT_SATURATION_RANGE)?;
+    u16::try_from(v).map_err(|_| "saturation out of range".to_string())
+}
+
+pub fn effect_value(value: i32) -> Result<u16, String> {
+    let v = in_range("value", value, EFFECT_VALUE_RANGE)?;
+    u16::try_from(v).map_err(|_| "value out of range".to_string())
 }
 
 pub fn color_temperature(value: i32) -> Result<u16, String> {
@@ -124,6 +138,19 @@ mod tests {
         assert!(saturation(0).is_err());
         assert!(saturation(101).is_err());
         assert!(saturation(i32::MIN).is_err());
+    }
+
+    #[test]
+    fn effect_color_components_follow_preset_ranges() {
+        assert_eq!(effect_saturation(0), Ok(0));
+        assert_eq!(effect_saturation(100), Ok(100));
+        assert!(effect_saturation(-1).is_err());
+        assert!(effect_saturation(101).is_err());
+        assert_eq!(effect_value(1), Ok(1));
+        assert_eq!(effect_value(100), Ok(100));
+        assert!(effect_value(0).is_err());
+        assert!(effect_value(101).is_err());
+        assert!(effect_value(i32::MAX).is_err());
     }
 
     #[test]

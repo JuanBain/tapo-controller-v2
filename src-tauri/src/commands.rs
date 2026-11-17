@@ -2,12 +2,13 @@ use std::sync::Arc;
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
-use crate::device::{connected_devices, get_target, DeviceManager, TapoDevice, DeviceInfo};
+use crate::device::{self, connected_devices, get_target, DeviceManager, TapoDevice, DeviceInfo};
 use crate::storage::{Storage, Preset, Schedule, SavedDevice};
 use crate::scheduler::SchedulerManager;
 use crate::discovery;
 use crate::credentials::{CredentialManager, SavedCredentials};
 use crate::validation;
+use crate::custom_effects::{self, CustomMode, EffectColor, Hsv, RainbowSpeed};
 
 // ============ State wrappers ============
 
@@ -62,9 +63,69 @@ pub struct TemperatureRequest {
 pub struct EffectRequest {
     name: String,
     ip: Option<String>,
+    #[serde(default)]
+    brightness: Option<i32>,
+    /// Rainbow only; rejected for every other effect.
+    #[serde(default)]
+    rainbow_speed: Option<RainbowSpeed>,
 }
 
+#[derive(Serialize)]
+pub struct EffectResponse {
+    success: bool,
+    /// `"classic"` (`set_lighting_effect`) or `"segment"` (`set_segment_effect`).
+    kind: &'static str,
+    effect: String,
+    brightness: Option<u8>,
+    /// Round-trip time of the device request, for latency measurements.
+    elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rainbow_speed: Option<RainbowSpeed>,
+}
+
+/// Only the mode, three colors and brightness come from the UI.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomEffectRequest {
+    ip: String,
+    mode: CustomMode,
+    colors: Vec<EffectColor>,
+    brightness: i32,
+}
+
+#[derive(Serialize)]
+pub struct CustomEffectResponse {
+    success: bool,
+    mode: CustomMode,
+    /// The validated `[hue, saturation, value]` colors that were sent.
+    colors: [Hsv; custom_effects::COLOR_COUNT],
+    brightness: u8,
+    elapsed_ms: u64,
+}
+
+/// Experiments never fall back to "the only connected device" and accept no
+/// parameters besides the fixed experiment id.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentRequest {
+    ip: String,
+    experiment: device::Experiment,
+}
+
+#[derive(Serialize)]
+pub struct ExperimentResponse {
+    success: bool,
+    experiment: device::Experiment,
+    elapsed_ms: u64,
+}
+
+#[derive(Serialize)]
+pub struct EffectCatalogItem {
+    id: &'static str,
+    label: &'static str,
+}
+
+#[derive(Deserialize, Clone)]
 pub struct CreatePresetRequest {
     name: String,
     hue: Option<i32>,
@@ -113,6 +174,7 @@ pub struct DeviceListItem {
     connected: bool,
     device_on: Option<bool>,
     brightness: Option<u8>,
+    supports_effects: Option<bool>,
 }
 
 // ============ Validation helpers ============
@@ -122,6 +184,11 @@ fn validate_preset(req: &CreatePresetRequest) -> Result<(), String> {
     if let Some(h) = req.hue { validation::hue(h)?; }
     if let Some(s) = req.saturation { validation::saturation(s)?; }
     if let Some(t) = req.color_temperature { validation::color_temperature(t)?; }
+    if let Some(e) = &req.effect {
+        if device::effect_preset(e).is_none() {
+            return Err(format!("Unknown effect: {}", e));
+        }
+    }
     Ok(())
 }
 
@@ -279,6 +346,7 @@ pub async fn list_devices(
             connected: connected.contains_key(&s.ip),
             device_on: None,
             brightness: None,
+            supports_effects: None,
         };
 
         if let Some(device) = connected.get(&s.ip) {
@@ -287,6 +355,7 @@ pub async fn list_devices(
                     item.nickname = Some(info.nickname);
                     item.device_on = Some(info.device_on);
                     item.brightness = Some(info.brightness);
+                    item.supports_effects = Some(info.supports_effects);
                 }
                 Err(_) => {
                     item.connected = false;
@@ -413,15 +482,137 @@ pub async fn device_temperature(
 pub async fn device_effect(
     req: EffectRequest,
     devices: State<'_, DeviceManager>,
-) -> Result<SuccessResponse, String> {
+) -> Result<EffectResponse, String> {
+    let (effect, brightness) = validate_effect_request(&req)?;
+    let rainbow_speed = validate_rainbow_speed(&effect, req.rainbow_speed)?;
     let device = get_target(devices.inner(), req.ip.as_deref()).await?;
-    device.set_effect(&req.name).await?;
-    Ok(SuccessResponse { success: true })
+    let started = std::time::Instant::now();
+    device.set_effect_with_speed(&effect, brightness, rainbow_speed).await?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    log::info!("Effect {} applied in {} ms", effect, elapsed_ms);
+    Ok(EffectResponse { success: true, kind: "classic", effect, brightness, elapsed_ms, rainbow_speed })
 }
 
 #[tauri::command]
+pub async fn device_custom_effect(
+    req: CustomEffectRequest,
+    devices: State<'_, DeviceManager>,
+) -> Result<CustomEffectResponse, String> {
+    run_custom_effect_request(req, devices.inner()).await
+}
+
+/// Available in every build. Unlike diagnostics it is not gated on the build
+/// profile; it is limited by the closed request instead.
+async fn run_custom_effect_request(req: CustomEffectRequest, devices: &DeviceManager) -> Result<CustomEffectResponse, String> {
+    let (mode, colors, brightness) = validate_custom_effect_request(&req)?;
+    let device = get_target(devices, Some(explicit_ip(&req.ip)?)).await?;
+    let started = std::time::Instant::now();
+    device.set_custom_effect(mode, colors, brightness).await?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    log::info!("Custom {:?} effect applied in {} ms", mode, elapsed_ms);
+    Ok(CustomEffectResponse { success: true, mode, colors, brightness, elapsed_ms })
+}
+
+#[tauri::command]
+pub async fn device_segment_effect(
+    req: EffectRequest,
+    devices: State<'_, DeviceManager>,
+) -> Result<EffectResponse, String> {
+    let (effect, brightness) = validate_segment_effect_request(&req)?;
+    let device = get_target(devices.inner(), req.ip.as_deref()).await?;
+    let started = std::time::Instant::now();
+    device.set_segment_effect(&effect, brightness).await?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    log::info!("Segment effect {} applied in {} ms", effect, elapsed_ms);
+    Ok(EffectResponse { success: true, kind: "segment", effect, brightness, elapsed_ms, rainbow_speed: None })
+}
+
+fn explicit_ip(ip: &str) -> Result<&str, String> {
+    let ip = ip.trim();
+    if ip.is_empty() {
+        return Err("An explicit device IP is required".to_string());
+    }
+    Ok(ip)
+}
+
+/// Read-only. The response holds allowlisted lighting fields only; it is not logged.
+#[tauri::command]
+pub async fn device_lighting_capabilities(
+    ip: String,
+    devices: State<'_, DeviceManager>,
+) -> Result<crate::capabilities::LightingCapabilities, String> {
+    let device = get_target(devices.inner(), Some(explicit_ip(&ip)?)).await?;
+    device.lighting_capabilities().await
+}
+
+#[tauri::command]
+pub async fn device_experiment(
+    req: ExperimentRequest,
+    devices: State<'_, DeviceManager>,
+) -> Result<ExperimentResponse, String> {
+    run_experiment_request(req, devices.inner()).await
+}
+
+/// Diagnostics X1–X5: development builds only. Checked before anything else,
+/// so a release build never looks up or contacts a device for them.
+async fn run_experiment_request(req: ExperimentRequest, devices: &DeviceManager) -> Result<ExperimentResponse, String> {
+    if !device::experiments_enabled() {
+        return Err("Lighting experiments are only available in development builds".to_string());
+    }
+    let device = get_target(devices, Some(explicit_ip(&req.ip)?)).await?;
+    let started = std::time::Instant::now();
+    device.run_experiment(req.experiment).await?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    log::info!("Experiment {:?} applied in {} ms", req.experiment, elapsed_ms);
+    Ok(ExperimentResponse { success: true, experiment: req.experiment, elapsed_ms })
+}
+
+fn validate_effect_request(req: &EffectRequest) -> Result<(String, Option<u8>), String> {
+    let effect = req.name.trim().to_lowercase();
+    if device::effect_preset(&effect).is_none() {
+        return Err(format!("Unknown effect: {}", req.name));
+    }
+    let brightness = req.brightness.map(validation::brightness).transpose()?;
+    Ok((effect, brightness))
+}
+
+fn validate_rainbow_speed(effect: &str, speed: Option<RainbowSpeed>) -> Result<Option<RainbowSpeed>, String> {
+    match speed {
+        Some(_) if effect != "rainbow" => Err("Speed can only be set for Rainbow".to_string()),
+        speed => Ok(speed),
+    }
+}
+
+fn validate_custom_effect_request(
+    req: &CustomEffectRequest,
+) -> Result<(CustomMode, [Hsv; custom_effects::COLOR_COUNT], u8), String> {
+    let colors = custom_effects::validate_colors(&req.colors)?;
+    let brightness = validation::brightness(req.brightness)?;
+    Ok((req.mode, colors, brightness))
+}
+
+fn validate_segment_effect_request(req: &EffectRequest) -> Result<(String, Option<u8>), String> {
+    let effect = req.name.trim().to_lowercase();
+    if device::segment_effect_preset(&effect).is_none() {
+        return Err(format!("Unknown segment effect: {}", req.name));
+    }
+    let brightness = req.brightness.map(validation::brightness).transpose()?;
+    Ok((effect, brightness))
+}
+
+fn catalog_items(catalog: &[(&'static str, &'static str)]) -> Vec<EffectCatalogItem> {
+    catalog.iter().map(|&(id, label)| EffectCatalogItem { id, label }).collect()
+}
+
+/// `effects` keeps the original id list; `catalog` adds display names;
+/// `segment_catalog` lists the segment presets.
+#[tauri::command]
 pub async fn available_effects() -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({ "effects": TapoDevice::get_available_effects() }))
+    Ok(serde_json::json!({
+        "effects": TapoDevice::get_available_effects(),
+        "catalog": catalog_items(&device::EFFECT_CATALOG),
+        "segment_catalog": catalog_items(&device::SEGMENT_EFFECT_CATALOG),
+    }))
 }
 
 // ============ Preset Commands ============
@@ -645,7 +836,234 @@ mod tests {
             color_temperature: None, effect: None,
         };
         assert!(validate_preset(&ok).is_ok());
+        let bad_effect = CreatePresetRequest { effect: Some("disco".into()), ..ok.clone() };
+        assert!(validate_preset(&bad_effect).is_err());
+        let good_effect = CreatePresetRequest { effect: Some("aurora".into()), ..ok.clone() };
+        assert!(validate_preset(&good_effect).is_ok());
         let bad = CreatePresetRequest { brightness: 300, ..ok };
         assert!(validate_preset(&bad).is_err());
+    }
+
+    fn effect_req(json: &str) -> EffectRequest {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn effect_request_contract() {
+        let req = effect_req(r#"{"name":"Aurora","ip":"192.168.0.10"}"#);
+        assert_eq!(validate_effect_request(&req), Ok(("aurora".to_string(), None)));
+        let req = effect_req(r#"{"name":"ocean","ip":null,"brightness":40}"#);
+        assert_eq!(validate_effect_request(&req), Ok(("ocean".to_string(), Some(40))));
+    }
+
+    #[test]
+    fn effect_request_rejects_invalid_input() {
+        assert!(validate_effect_request(&effect_req(r#"{"name":"disco","ip":null}"#)).is_err());
+        assert!(validate_effect_request(&effect_req(r#"{"name":"aurora","ip":null,"brightness":0}"#)).is_err());
+        assert!(validate_effect_request(&effect_req(r#"{"name":"aurora","ip":null,"brightness":101}"#)).is_err());
+    }
+
+    #[test]
+    fn effect_catalog_contract() {
+        let v = tauri::async_runtime::block_on(available_effects()).unwrap();
+        assert_eq!(v["effects"].as_array().unwrap().len(), 17);
+        let catalog = v["catalog"].as_array().unwrap();
+        assert_eq!(catalog.len(), 17);
+        assert_eq!(catalog[0]["id"], "aurora");
+        assert_eq!(catalog[0]["label"], "Aurora");
+        let segments = v["segment_catalog"].as_array().unwrap();
+        assert_eq!(segments.len(), 55);
+        assert_eq!(segments[10]["id"], "electro_dance");
+        assert_eq!(segments[10]["label"], "Electro Dance");
+    }
+
+    #[test]
+    fn segment_effect_request_contract() {
+        let req = effect_req(r#"{"name":"Disco","ip":"192.168.0.10"}"#);
+        assert_eq!(validate_segment_effect_request(&req), Ok(("disco".to_string(), None)));
+        let req = effect_req(r#"{"name":"moonlight","ip":null,"brightness":25}"#);
+        assert_eq!(validate_segment_effect_request(&req), Ok(("moonlight".to_string(), Some(25))));
+    }
+
+    #[test]
+    fn segment_and_classic_requests_are_not_interchangeable() {
+        assert!(validate_segment_effect_request(&effect_req(r#"{"name":"aurora","ip":null}"#)).is_err());
+        assert!(validate_effect_request(&effect_req(r#"{"name":"disco","ip":null}"#)).is_err());
+        assert!(validate_segment_effect_request(&effect_req(r#"{"name":"disco","ip":null,"brightness":0}"#)).is_err());
+        assert!(validate_segment_effect_request(&effect_req(r#"{"name":"disco","ip":null,"brightness":101}"#)).is_err());
+    }
+
+    #[test]
+    fn experiment_request_contract() {
+        let req: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x1_static_red_white_blue"}"#).unwrap();
+        assert_eq!(req.experiment, device::Experiment::X1StaticRedWhiteBlue);
+        let x2: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x2_sequence_red_white_blue"}"#).unwrap();
+        assert_eq!(x2.experiment, device::Experiment::X2SequenceRedWhiteBlue);
+        let x3: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x3_segment_circulating"}"#).unwrap();
+        assert_eq!(x3.experiment, device::Experiment::X3SegmentCirculating);
+        let x4a: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x4a_rainbow_transition_3000"}"#).unwrap();
+        let x4b: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x4b_rainbow_transition_750"}"#).unwrap();
+        assert_eq!(x4a.experiment, device::Experiment::X4aRainbowTransition3000);
+        assert_eq!(x4b.experiment, device::Experiment::X4bRainbowTransition750);
+        let x5a: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x5a_rainbow_direction_3"}"#).unwrap();
+        let x5b: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"192.168.0.10","experiment":"x5b_rainbow_direction_4"}"#).unwrap();
+        assert_eq!(x5a.experiment, device::Experiment::X5aRainbowDirection3);
+        assert_eq!(x5b.experiment, device::Experiment::X5bRainbowDirection4);
+        for invalid in [
+            r#"{"ip":"192.168.0.10"}"#,
+            r#"{"experiment":"x1_static_red_white_blue"}"#,
+            r#"{"ip":null,"experiment":"x1_static_red_white_blue"}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x4_transition"}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x3_segment"}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x1_static_red_white_blue","sequence":[[0,0,0]]}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x1_static_red_white_blue","brightness":50}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x2_sequence_red_white_blue","direction":4}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x2_sequence_red_white_blue","duration":50}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x3_segment_circulating","segments":[49]}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x3_segment_circulating","states":[[267,56,100,0]]}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x4a_rainbow_transition_3000","transition":1500}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x5_direction"}"#,
+            r#"{"ip":"192.168.0.10","experiment":"x5a_rainbow_direction_3","direction":1}"#,
+        ] {
+            assert!(serde_json::from_str::<ExperimentRequest>(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn experiments_and_capabilities_need_an_explicit_ip() {
+        assert_eq!(explicit_ip(" 192.168.0.10 "), Ok("192.168.0.10"));
+        assert!(explicit_ip("").is_err());
+        assert!(explicit_ip("   ").is_err());
+    }
+
+    #[test]
+    fn experiment_response_contract() {
+        let res = ExperimentResponse {
+            success: true, experiment: device::Experiment::X1StaticRedWhiteBlue, elapsed_ms: 90,
+        };
+        assert_eq!(serde_json::to_value(res).unwrap(), serde_json::json!({
+            "success": true, "experiment": "x1_static_red_white_blue", "elapsed_ms": 90
+        }));
+    }
+
+    #[test]
+    fn rainbow_speed_request_contract() {
+        let req = effect_req(r#"{"name":"rainbow","ip":"192.168.0.10","brightness":30,"rainbow_speed":"slow"}"#);
+        let (effect, brightness) = validate_effect_request(&req).unwrap();
+        assert_eq!((effect.as_str(), brightness), ("rainbow", Some(30)));
+        assert_eq!(validate_rainbow_speed(&effect, req.rainbow_speed), Ok(Some(RainbowSpeed::Slow)));
+        let plain = effect_req(r#"{"name":"rainbow","ip":null}"#);
+        assert_eq!(validate_rainbow_speed("rainbow", plain.rainbow_speed), Ok(None));
+        let other = effect_req(r#"{"name":"aurora","ip":null,"rainbow_speed":"fast"}"#);
+        assert!(validate_rainbow_speed("aurora", other.rainbow_speed).is_err());
+        for bad in [
+            r#"{"name":"rainbow","ip":null,"rainbow_speed":"turbo"}"#,
+            r#"{"name":"rainbow","ip":null,"rainbow_speed":1500}"#,
+            r#"{"name":"rainbow","ip":null,"rainbow_speed":"Fast"}"#,
+        ] {
+            assert!(serde_json::from_str::<EffectRequest>(bad).is_err(), "{bad}");
+        }
+        let res = EffectResponse {
+            success: true, kind: "classic", effect: "rainbow".into(), brightness: Some(30),
+            elapsed_ms: 80, rainbow_speed: Some(RainbowSpeed::Slow),
+        };
+        assert_eq!(serde_json::to_value(res).unwrap()["rainbow_speed"], "slow");
+    }
+
+    fn custom_req(json: &str) -> Result<CustomEffectRequest, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    const RWB: &str = r#"[{"hue":359,"saturation":85,"value":100},{"hue":0,"saturation":0,"value":100},{"hue":236,"saturation":72,"value":100}]"#;
+
+    #[test]
+    fn custom_effect_request_contract() {
+        let req = custom_req(&format!(r#"{{"ip":"192.168.0.10","mode":"static","colors":{RWB},"brightness":60}}"#)).unwrap();
+        assert_eq!(
+            validate_custom_effect_request(&req),
+            Ok((CustomMode::Static, [[359, 85, 100], [0, 0, 100], [236, 72, 100]], 60)),
+        );
+        let req = custom_req(&format!(r#"{{"ip":"192.168.0.10","mode":"sequence","colors":{RWB},"brightness":1}}"#)).unwrap();
+        assert_eq!(validate_custom_effect_request(&req).unwrap().0, CustomMode::Sequence);
+        let res = CustomEffectResponse {
+            success: true, mode: CustomMode::Sequence, colors: [[1, 2, 3]; 3], brightness: 60, elapsed_ms: 140,
+        };
+        assert_eq!(serde_json::to_value(res).unwrap(), serde_json::json!({
+            "success": true, "mode": "sequence", "colors": [[1, 2, 3], [1, 2, 3], [1, 2, 3]],
+            "brightness": 60, "elapsed_ms": 140
+        }));
+    }
+
+    #[test]
+    fn custom_effect_request_rejects_invalid_input() {
+        let two = r#"[{"hue":1,"saturation":1,"value":1},{"hue":1,"saturation":1,"value":1}]"#;
+        let bad_value = r#"[{"hue":1,"saturation":1,"value":0},{"hue":1,"saturation":1,"value":1},{"hue":1,"saturation":1,"value":1}]"#;
+        let bad_hue = r#"[{"hue":400,"saturation":1,"value":1},{"hue":1,"saturation":1,"value":1},{"hue":1,"saturation":1,"value":1}]"#;
+        for json in [
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{two},"brightness":50}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{bad_value},"brightness":50}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{bad_hue},"brightness":50}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{RWB},"brightness":0}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{RWB},"brightness":101}}"#),
+        ] {
+            let req = custom_req(&json).unwrap();
+            assert!(validate_custom_effect_request(&req).is_err(), "{json}");
+        }
+        for json in [
+            format!(r#"{{"ip":"1.2.3.4","mode":"pulse","colors":{RWB},"brightness":50}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{RWB}}}"#),
+            format!(r#"{{"mode":"static","colors":{RWB},"brightness":50}}"#),
+            format!(r#"{{"ip":null,"mode":"static","colors":{RWB},"brightness":50}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{RWB},"brightness":50,"segments":[0]}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"sequence","colors":{RWB},"brightness":50,"duration":10}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"sequence","colors":{RWB},"brightness":50,"direction":4}}"#),
+            format!(r#"{{"ip":"1.2.3.4","mode":"static","colors":{RWB},"brightness":50,"display_colors":[[0,0,0]]}}"#),
+            r#"{"ip":"1.2.3.4","mode":"static","colors":[[0,0,100],[0,0,100],[0,0,100]],"brightness":50}"#.to_string(),
+        ] {
+            assert!(custom_req(&json).is_err(), "{json}");
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_effects_are_enabled_in_every_build_profile() {
+        let devices = device::new_device_manager();
+        let req = custom_req(&format!(r#"{{"ip":"10.99.1.1","mode":"sequence","colors":{RWB},"brightness":50}}"#)).unwrap();
+        let err = run_custom_effect_request(req, &devices).await.err().unwrap();
+        assert_eq!(err, "Device 10.99.1.1 is not connected");
+        let invalid = custom_req(&format!(r#"{{"ip":"10.99.1.1","mode":"static","colors":{RWB},"brightness":0}}"#)).unwrap();
+        let err = run_custom_effect_request(invalid, &devices).await.err().unwrap();
+        assert!(err.contains("brightness"), "{err}");
+        let blank_ip = custom_req(&format!(r#"{{"ip":" ","mode":"static","colors":{RWB},"brightness":50}}"#)).unwrap();
+        let err = run_custom_effect_request(blank_ip, &devices).await.err().unwrap();
+        assert!(err.contains("explicit device IP"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn diagnostics_follow_the_build_profile() {
+        let devices = device::new_device_manager();
+        let req: ExperimentRequest = serde_json::from_str(
+            r#"{"ip":"10.99.1.2","experiment":"x1_static_red_white_blue"}"#).unwrap();
+        let err = run_experiment_request(req, &devices).await.err().unwrap();
+        if cfg!(debug_assertions) {
+            assert_eq!(err, "Device 10.99.1.2 is not connected");
+        } else {
+            assert_eq!(err, "Lighting experiments are only available in development builds");
+        }
+    }
+
+    #[test]
+    fn effect_response_contract() {
+        let res = EffectResponse { success: true, kind: "segment", effect: "disco".into(), brightness: Some(40), elapsed_ms: 120, rainbow_speed: None };
+        let v = serde_json::to_value(res).unwrap();
+        assert_eq!(v, serde_json::json!({
+            "success": true, "kind": "segment", "effect": "disco", "brightness": 40, "elapsed_ms": 120
+        }));
     }
 }

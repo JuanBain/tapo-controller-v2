@@ -11,6 +11,7 @@
     "dev:vite": "vite",
     "dev": "tauri dev",
     "build:frontend": "vite build",
+    "test:frontend": "node --test tests/frontend/*.test.ts",
     "build": "tauri build",
     "tauri": "tauri"
   },
