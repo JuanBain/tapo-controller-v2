@@ -1,6 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { HsvColor, HsvColorPicker } from 'react-colorful';
 import { TitleBar } from './components/TitleBar';
+import { EffectsPanel } from './components/EffectsPanel';
+import { LightingDiagnostics } from './components/LightingDiagnostics';
+import { applyEffect, Experiment, runExperiment } from './lib/effects';
+import {
+  classicTarget, ConfirmedEffect, createEffectController, CustomColors, CustomMode, EffectColor, EffectKind,
+  EffectTarget, EffectView, isRainbowAt, RAINBOW_ID, RainbowSpeed, StripSettings, stripSettings, updateStrip, withCustomColor,
+} from './lib/effectState';
+
+type Mode = 'color' | 'white' | EffectView;
+const isEffectMode = (m: Mode): m is EffectView => m === 'classic' || m === 'segment' || m === 'custom';
+/** An error message that belongs to one strip; shown only while that strip is selected. */
+type StripError = { ip: string; message: string } | null;
 import { Power, Sun, Wifi, Lock, Mail, Loader2, LogOut, Thermometer, Sparkles, Search, Plus, Trash2, RefreshCw, ChevronLeft, Settings } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
@@ -14,6 +26,7 @@ interface DeviceInfo {
   brightness: number | null;
   hue?: number | null;
   saturation?: number | null;
+  supports_effects?: boolean | null;
 }
 
 export default function App() {
@@ -40,11 +53,42 @@ export default function App() {
   const [color, setColor] = useState<HsvColor>({ h: 200, s: 100, v: 100 });
   const [brightness, setBrightness] = useState(100);
   const [colorTemp, setColorTemp] = useState(4000);
-  const [mode, setMode] = useState<'color' | 'white'>('color');
+  const [mode, setMode] = useState<Mode>('color');
+  // Keyed by device IP; only filled after the device accepted the effect.
+  const [confirmedEffects, setConfirmedEffects] = useState<Record<string, ConfirmedEffect>>({});
+  const [lastColors, setLastColors] = useState<Record<string, { h: number; s: number }>>({});
+  const [lastTemps, setLastTemps] = useState<Record<string, number>>({});
+  // Per device: last accepted preset of each kind, and which view was last.
+  const [lastEffects, setLastEffects] = useState<
+    Record<string, Partial<Record<EffectKind, string>> & { latest?: EffectView }>
+  >({});
+  // Per device: Rainbow speed and custom colors, for this session only.
+  const [strips, setStrips] = useState<Record<string, StripSettings>>({});
+  const stripsRef = useRef<Record<string, StripSettings>>({});
+  // Per device: the effect most recently sent, accepted or still in flight.
+  // A delayed brightness resend uses it so it never restores a replaced effect.
+  const effects = useRef(createEffectController(applyEffect)).current;
+  const brightnessRef = useRef<Record<string, number>>({});
+  const modeRef = useRef<Record<string, Mode>>({});
+  const lastColorRef = useRef<Record<string, { h: number; s: number }>>({});
+  const lastTempRef = useRef<Record<string, number>>({});
+  const [brightnessFailure, setBrightnessFailure] = useState<StripError>(null);
+  const [controlFailure, setControlFailure] = useState<StripError>(null);
+  // The strip selected right now, for async replies that arrive after a switch.
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedDevice;
+  const [applyingMode, setApplyingMode] = useState(false);
+  const [modeStatus, setModeStatus] = useState('');
+  const modeRequest = useRef(0);
 
   const colorTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const brightnessTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // One pending brightness change per strip, so selecting the other strip does not drop it.
+  const brightnessTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const tempTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const cancelBrightness = (ip: string) => {
+    clearTimeout(brightnessTimeouts.current[ip]);
+    delete brightnessTimeouts.current[ip];
+  };
 
   const loadDevices = async () => {
     try {
@@ -90,17 +134,51 @@ export default function App() {
     if (selectedDevice) {
       const device = devices.find(d => d.ip === selectedDevice);
       if (device && device.connected) {
-        invoke<{ brightness: number; hue: number | null; saturation: number | null }>('device_info', { ip: selectedDevice })
+        invoke<{ brightness: number; hue: number | null; saturation: number | null; color_temp: number | null }>('device_info', { ip: selectedDevice })
           .then(info => {
-            setBrightness(info.brightness || 100);
-            if (info.hue !== null) {
+            if (selectedRef.current !== selectedDevice) return;
+            const remembered = brightnessRef.current[selectedDevice];
+            if (remembered === undefined) brightnessRef.current[selectedDevice] = info.brightness || 100;
+            setBrightness(remembered ?? (info.brightness || 100));
+            const chosen = lastColorRef.current[selectedDevice];
+            if (chosen) {
+              setColor(c => ({ ...c, h: chosen.h, s: chosen.s }));
+            } else if (info.hue !== null && info.saturation !== null) {
               setColor(c => ({ ...c, h: info.hue!, s: info.saturation! }));
             }
+            const temp = lastTempRef.current[selectedDevice];
+            if (temp) setColorTemp(temp);
+            else if (info.color_temp) setColorTemp(info.color_temp);
           })
           .catch(() => {});
       }
     }
   }, [selectedDevice, devices]);
+
+  // Each strip keeps its own tab. Selecting a strip only changes the view; it sends nothing.
+  useEffect(() => {
+    modeRequest.current++;
+    setApplyingMode(false);
+    setModeStatus('');
+    if (!selectedDevice) return;
+    setMode(modeRef.current[selectedDevice] ?? 'color');
+    const remembered = brightnessRef.current[selectedDevice];
+    if (remembered !== undefined) setBrightness(remembered);
+  }, [selectedDevice]);
+
+  // Reconnects every saved device that is not connected yet, using the session
+  // the login just created. Offline devices stay listed with a Reconnect button.
+  // Returns how many devices are saved.
+  const reconnectSavedDevices = async (): Promise<number> => {
+    const data: { devices: DeviceInfo[] } = await invoke('list_devices');
+    await Promise.allSettled(
+      data.devices
+        .filter(d => !d.connected)
+        .map(d => invoke('reconnect_device', { ip: d.ip })),
+    );
+    await loadDevices();
+    return data.devices.length;
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,9 +188,13 @@ export default function App() {
       await invoke('login', { req: { email, password, device_ip: null, remember_me: rememberMe } });
       setPassword('');
       setLoggedIn(true);
-      // Go straight to device discovery
-      setShowAddDevice(true);
-      scanNetwork();
+      // Saved devices come back without asking again; discovery only runs
+      // when there is nothing saved yet (first use).
+      const saved = await reconnectSavedDevices();
+      if (saved === 0) {
+        setShowAddDevice(true);
+        scanNetwork();
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -203,28 +285,188 @@ export default function App() {
     await loadDevices();
   };
 
+  const rememberColor = (ip: string, h: number, s: number) => {
+    const chosen = { h: Math.round(h), s: Math.min(100, Math.max(1, Math.round(s))) };
+    lastColorRef.current = { ...lastColorRef.current, [ip]: chosen };
+    setLastColors(lastColorRef.current);
+    return chosen;
+  };
+
+  const rememberTemp = (ip: string, kelvin: number) => {
+    const chosen = Math.min(6500, Math.max(2500, Math.round(kelvin)));
+    lastTempRef.current = { ...lastTempRef.current, [ip]: chosen };
+    setLastTemps(lastTempRef.current);
+    return chosen;
+  };
+
+  // `null` after a color, white, plain brightness or experiment command.
+  const setConfirmedEffect = (ip: string, effect: ConfirmedEffect | null) => {
+    if (effect) {
+      const target = effect.target;
+      setLastEffects(prev => ({
+        ...prev,
+        [ip]: target.kind === 'custom'
+          ? { ...prev[ip], latest: 'custom' }
+          : { ...prev[ip], [target.kind]: target.id, latest: target.kind },
+      }));
+    } else {
+      effects.clear(ip);
+    }
+    setConfirmedEffects(prev => {
+      const next = { ...prev };
+      if (effect) next[ip] = effect;
+      else delete next[ip];
+      return next;
+    });
+  };
+
+  const changeStrip = (ip: string, change: (s: StripSettings) => StripSettings) => {
+    stripsRef.current = updateStrip(stripsRef.current, ip, change);
+    setStrips(stripsRef.current);
+  };
+
+  const brightnessOf = (ip: string) => brightnessRef.current[ip] ?? brightness;
+
+  const activeEffect = selectedDevice ? confirmedEffects[selectedDevice] ?? null : null;
+  const effectBrightness = isEffectMode(mode) && activeEffect !== null;
+
+  // Every effect request goes through here. Commands to one strip are applied
+  // in send order (backend `CommandGate`), so the last request sent wins. A
+  // reply to a request that was replaced meanwhile is not recorded.
+  const sendEffect = async (ip: string, target: EffectTarget, value: number) => {
+    cancelBrightness(ip);
+    const { confirmed, current } = await effects.send(ip, target, value);
+    if (current) setConfirmedEffect(ip, confirmed);
+  };
+
+  // Runs a color, white, plain brightness or experiment command. On success the
+  // strip no longer shows an effect, unless an effect was sent after this one.
+  const sendPlainCommand = async <T,>(ip: string, command: () => Promise<T>): Promise<T> => {
+    const before = effects.snapshot(ip);
+    const result = await command();
+    if (effects.clearIfUnchanged(ip, before)) setConfirmedEffect(ip, null);
+    return result;
+  };
+
+  const clearFailure = (setter: React.Dispatch<React.SetStateAction<StripError>>, ip: string) =>
+    setter(prev => (prev?.ip === ip ? null : prev));
+  const failure = (current: StripError) => (current && current.ip === selectedDevice ? current.message : '');
+
+  const activateEffect = async (ip: string, kind: EffectKind, id: string) => {
+    clearFailure(setBrightnessFailure, ip);
+    const target: EffectTarget = kind === 'classic'
+      ? classicTarget(id, stripSettings(stripsRef.current, ip).rainbowSpeed)
+      : { kind: 'segment', id };
+    await sendEffect(ip, target, brightnessOf(ip));
+  };
+
+  // The selector follows what the strip was last asked to show, so a late reply
+  // for an older speed never overwrites a newer choice.
+  const rememberSpeedIfCurrent = (ip: string, speed: RainbowSpeed) => {
+    if (isRainbowAt(effects.current(ip), speed)) changeStrip(ip, s => ({ ...s, rainbowSpeed: speed }));
+  };
+
+  // Sent right away only while Rainbow is this strip's latest effect; otherwise
+  // the choice is kept for the next time Rainbow is chosen.
+  const changeRainbowSpeed = async (ip: string, speed: RainbowSpeed) => {
+    const current = effects.current(ip);
+    if (current?.kind === 'classic' && current.id === RAINBOW_ID) {
+      clearFailure(setBrightnessFailure, ip);
+      await sendEffect(ip, classicTarget(RAINBOW_ID, speed), brightnessOf(ip));
+      rememberSpeedIfCurrent(ip, speed);
+      return;
+    }
+    changeStrip(ip, s => ({ ...s, rainbowSpeed: speed }));
+  };
+
+  const applyCustomEffect = async (ip: string, mode: CustomMode, colors: CustomColors) => {
+    clearFailure(setBrightnessFailure, ip);
+    await sendEffect(ip, { kind: 'custom', mode, colors }, brightnessOf(ip));
+  };
+
+  const restoreRainbow = async (ip: string) => {
+    await sendEffect(ip, classicTarget(RAINBOW_ID, 'normal'), brightnessOf(ip));
+    rememberSpeedIfCurrent(ip, 'normal');
+  };
+
+  // Experiments are not presets and are not saved. Clearing the confirmed
+  // effect keeps a later brightness change from re-sending a preset over them.
+  const runLightingExperiment = async (ip: string, experiment: Experiment) => {
+    cancelBrightness(ip);
+    return sendPlainCommand(ip, () => runExperiment(ip, experiment));
+  };
+
+  // `tapo` documents that plain brightness/color/temperature requests remove a
+  // running effect, so in Effects mode the effect is re-sent with the new
+  // brightness instead. Slower debounce: each call resends the whole effect,
+  // with the strip's own speed or colors.
   const handleBrightness = (val: number) => {
     setBrightness(val);
-    clearTimeout(brightnessTimeout.current);
-    brightnessTimeout.current = setTimeout(async () => {
-      await invoke('device_brightness', { req: { value: val, ip: selectedDevice } });
+    const ip = selectedDevice;
+    if (!ip) return;
+    clearFailure(setBrightnessFailure, ip);
+    brightnessRef.current[ip] = val;
+    cancelBrightness(ip);
+    const report = (err: unknown) => setBrightnessFailure({ ip, message: String(err) });
+    if (isEffectMode(mode) && effects.current(ip)) {
+      brightnessTimeouts.current[ip] = setTimeout(async () => {
+        delete brightnessTimeouts.current[ip];
+        try {
+          const res = await effects.resend(ip, val);
+          if (res?.current) setConfirmedEffect(ip, res.confirmed);
+        } catch (err) {
+          report(err);
+        }
+      }, 400);
+      return;
+    }
+    brightnessTimeouts.current[ip] = setTimeout(async () => {
+      delete brightnessTimeouts.current[ip];
+      try {
+        await sendPlainCommand(ip, () => invoke('device_brightness', { req: { value: val, ip } }));
+      } catch (err) {
+        report(err);
+      }
     }, 100);
+  };
+
+  // Color and White errors are shown for their strip; nothing is marked as applied.
+  const sendColor = async (ip: string, hue: number, saturation: number) => {
+    clearFailure(setControlFailure, ip);
+    try {
+      await sendPlainCommand(ip, () => invoke('device_color', { req: { hue, saturation, ip } }));
+    } catch (err) {
+      setControlFailure({ ip, message: String(err) });
+    }
+  };
+
+  const sendTemperature = async (ip: string, kelvin: number) => {
+    clearFailure(setControlFailure, ip);
+    try {
+      await sendPlainCommand(ip, () => invoke('device_temperature', { req: { kelvin, ip } }));
+    } catch (err) {
+      setControlFailure({ ip, message: String(err) });
+    }
   };
 
   const handleColorChange = (newColor: HsvColor) => {
     setColor(newColor);
     clearTimeout(colorTimeout.current);
-    colorTimeout.current = setTimeout(async () => {
-      await invoke('device_color', { req: { hue: Math.round(newColor.h), saturation: Math.round(newColor.s), ip: selectedDevice } });
-    }, 100);
+    const ip = selectedDevice;
+    if (!ip) return;
+    rememberColor(ip, newColor.h, newColor.s);
+    const hue = Math.round(newColor.h);
+    const saturation = Math.min(100, Math.max(1, Math.round(newColor.s)));
+    colorTimeout.current = setTimeout(() => { void sendColor(ip, hue, saturation); }, 100);
   };
 
   const handleColorTemp = (val: number) => {
     setColorTemp(val);
     clearTimeout(tempTimeout.current);
-    tempTimeout.current = setTimeout(async () => {
-      await invoke('device_temperature', { req: { kelvin: val, ip: selectedDevice } });
-    }, 100);
+    const ip = selectedDevice;
+    if (!ip) return;
+    rememberTemp(ip, val);
+    tempTimeout.current = setTimeout(() => { void sendTemperature(ip, val); }, 100);
   };
 
   const quickColors = [
@@ -238,10 +480,60 @@ export default function App() {
     { h: 320, s: 80, bg: '#ec4899' },
   ];
 
+  // Every tab reapplies its own last value, in any switch order. A pending
+  // brightness resend must not restore the previous mode afterwards.
+  // Opening Custom never sends: its colors are only sent with Apply.
+  const switchMode = async (next: Mode) => {
+    if (next === mode || applyingMode) return;
+    const ip = selectedDevice;
+    if (ip) cancelBrightness(ip);
+    clearTimeout(colorTimeout.current);
+    clearTimeout(tempTimeout.current);
+    setMode(next);
+    setModeStatus('');
+    if (!ip) return;
+    modeRef.current[ip] = next;
+    if (next === 'custom') return;
+    const effectId = isEffectMode(next) ? lastEffects[ip]?.[next] : undefined;
+    if (isEffectMode(next) && !effectId) return;
+
+    const request = ++modeRequest.current;
+    setApplyingMode(true);
+    setModeStatus(isEffectMode(next) ? 'Applying effect…' : next === 'color' ? 'Applying color…' : 'Applying white…');
+    try {
+      if (isEffectMode(next) && effectId) {
+        const target: EffectTarget = next === 'classic'
+          ? classicTarget(effectId, stripSettings(stripsRef.current, ip).rainbowSpeed)
+          : { kind: 'segment', id: effectId };
+        await sendEffect(ip, target, brightnessOf(ip));
+        if (modeRequest.current !== request) return;
+      } else if (next === 'color') {
+        const chosen = lastColors[ip] ?? rememberColor(ip, color.h, color.s);
+        setColor(c => ({ ...c, h: chosen.h, s: chosen.s }));
+        await sendPlainCommand(ip, () => invoke('device_color', { req: { hue: chosen.h, saturation: chosen.s, ip } }));
+        if (modeRequest.current !== request) return;
+      } else {
+        const kelvin = lastTemps[ip] ?? rememberTemp(ip, colorTemp);
+        setColorTemp(kelvin);
+        await sendPlainCommand(ip, () => invoke('device_temperature', { req: { kelvin, ip } }));
+        if (modeRequest.current !== request) return;
+      }
+      setModeStatus('');
+    } catch (err) {
+      if (modeRequest.current === request) setModeStatus(String(err));
+    } finally {
+      if (modeRequest.current === request) setApplyingMode(false);
+    }
+  };
+
   const applyQuickColor = async (h: number, s: number) => {
     setColor({ ...color, h, s });
     setMode('color');
-    await invoke('device_color', { req: { hue: h, saturation: s, ip: selectedDevice } });
+    const ip = selectedDevice;
+    if (!ip) return;
+    modeRef.current[ip] = 'color';
+    rememberColor(ip, h, s);
+    await sendColor(ip, h, s);
   };
 
   if (loading) {
@@ -492,21 +784,60 @@ export default function App() {
                 <input type="range" min="1" max="100" value={brightness}
                   onChange={e => handleBrightness(Number(e.target.value))}
                   className="w-full brightness-slider" />
+                {effectBrightness && (
+                  <p className="mt-1 text-[10px] text-zinc-500">Re-applies the active effect with this brightness</p>
+                )}
+                {failure(brightnessFailure) && <p className="mt-1 text-[10px] text-red-400">{failure(brightnessFailure)}</p>}
               </div>
 
               {/* Mode Tabs */}
               <div className="flex gap-1 p-1 bg-zinc-900/50 rounded-lg mb-3">
-                <button onClick={() => setMode('color')}
-                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'color' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+                <button onClick={() => switchMode('color')} disabled={applyingMode}
+                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${mode === 'color' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
                   Color
                 </button>
-                <button onClick={() => setMode('white')}
-                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'white' ? 'bg-amber-500 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+                <button onClick={() => switchMode('white')} disabled={applyingMode}
+                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${mode === 'white' ? 'bg-amber-500 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
                   White
                 </button>
+                <button onClick={() => switchMode(lastEffects[currentDevice.ip]?.latest ?? 'classic')} disabled={applyingMode}
+                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${isEffectMode(mode) ? 'bg-fuchsia-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+                  Effects
+                </button>
               </div>
+              {modeStatus && (
+                <p className={`mb-2 text-[10px] ${modeStatus.startsWith('Applying') ? 'text-zinc-400' : 'text-red-400'}`}>
+                  {modeStatus}
+                </p>
+              )}
 
-              {mode === 'color' ? (
+              {isEffectMode(mode) ? (
+                <div className="space-y-2">
+                  <EffectsPanel
+                    deviceIp={currentDevice.ip}
+                    supported={currentDevice.supports_effects === true}
+                    view={mode}
+                    confirmed={activeEffect}
+                    selectedId={mode === 'custom' ? null : lastEffects[currentDevice.ip]?.[mode] ?? null}
+                    busy={applyingMode}
+                    settings={stripSettings(strips, currentDevice.ip)}
+                    onViewChange={switchMode}
+                    onActivate={activateEffect}
+                    onRainbowSpeed={changeRainbowSpeed}
+                    onApplyCustom={applyCustomEffect}
+                    onCustomModeChange={(ip, customMode) => changeStrip(ip, s => ({ ...s, customMode }))}
+                    onCustomColorChange={(ip, customMode, index, c: EffectColor) =>
+                      changeStrip(ip, s => withCustomColor(s, customMode, index, c))} />
+                  {currentDevice.supports_effects === true && (
+                    <LightingDiagnostics
+                      deviceIp={currentDevice.ip}
+                      deviceName={currentDevice.nickname || currentDevice.model || 'this strip'}
+                      busy={applyingMode}
+                      onRun={runLightingExperiment}
+                      onRestore={restoreRainbow} />
+                  )}
+                </div>
+              ) : mode === 'color' ? (
                 <>
                   <div className="bg-zinc-900/50 rounded-xl p-3 mb-3">
                     <HsvColorPicker color={color} onChange={handleColorChange} />
@@ -518,6 +849,7 @@ export default function App() {
                         style={{ backgroundColor: c.bg }} />
                     ))}
                   </div>
+                  {failure(controlFailure) && <p className="mt-2 text-[10px] text-red-400">{failure(controlFailure)}</p>}
                 </>
               ) : (
                 <div className="bg-zinc-900/50 rounded-xl p-3">
@@ -535,6 +867,7 @@ export default function App() {
                     <span>Warm</span>
                     <span>Cool</span>
                   </div>
+                  {failure(controlFailure) && <p className="mt-2 text-[10px] text-red-400">{failure(controlFailure)}</p>}
                 </div>
               )}
             </div>

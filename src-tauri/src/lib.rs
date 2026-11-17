@@ -5,6 +5,8 @@ mod scheduler;
 mod discovery;
 mod credentials;
 mod validation;
+mod capabilities;
+mod custom_effects;
 
 use std::sync::Arc;
 use tauri::{
@@ -229,6 +231,10 @@ pub fn run() {
             commands::device_color,
             commands::device_temperature,
             commands::device_effect,
+            commands::device_segment_effect,
+            commands::device_lighting_capabilities,
+            commands::device_experiment,
+            commands::device_custom_effect,
             commands::available_effects,
             commands::list_presets,
             commands::create_preset,
